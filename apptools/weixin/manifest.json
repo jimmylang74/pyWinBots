@@ -1,0 +1,51 @@
+{
+  "name": "weixin",
+  "display_name": "微信 (WeChat)",
+  "version": "1.0.0",
+  "description": "微信 Windows 客户端自动化插件。支持启动微信、搜索联系人、发送消息。",
+  "author": "pyWinBots",
+  "app_path": "C:\\Program Files (x86)\\Tencent\\WeChat\\WeChat.exe",
+  "min_sdk_version": "1.0.0",
+  "backend": "uia",
+  "capabilities": [
+    "weixin_launch",
+    "weixin_search_contact",
+    "weixin_send_message",
+    "weixin_get_main_window"
+  ],
+  "tools": {
+    "weixin_launch": {
+      "description": "启动微信 Windows 客户端",
+      "params": []
+    },
+    "weixin_search_contact": {
+      "description": "搜索微信联系人",
+      "params": [
+        {
+          "name": "name",
+          "type": "string",
+          "description": "联系人姓名或昵称"
+        }
+      ]
+    },
+    "weixin_send_message": {
+      "description": "向指定联系人发送文本消息",
+      "params": [
+        {
+          "name": "contact",
+          "type": "string",
+          "description": "联系人姓名或昵称"
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "description": "消息内容"
+        }
+      ]
+    },
+    "weixin_get_main_window": {
+      "description": "获取微信主窗口信息（位置、大小、标题）",
+      "params": []
+    }
+  }
+}

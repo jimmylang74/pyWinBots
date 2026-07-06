@@ -1,0 +1,34 @@
+{
+  "mcp_server_url": "http://localhost:8000/mcp",
+  "tests": [
+    {
+      "id": "launch_weixin",
+      "tool": "weixin_launch",
+      "params": {},
+      "description": "启动微信"
+    },
+    {
+      "id": "search_contact",
+      "tool": "weixin_search_contact",
+      "params": {
+        "name": "文件传输助手"
+      },
+      "description": "搜索联系人"
+    },
+    {
+      "id": "send_message",
+      "tool": "weixin_send_message",
+      "params": {
+        "contact": "文件传输助手",
+        "message": "Hello from pyWinBots! 这是一条自动发送的测试消息。"
+      },
+      "description": "向文件传输助手发送测试消息"
+    },
+    {
+      "id": "get_window_info",
+      "tool": "weixin_get_main_window",
+      "params": {},
+      "description": "获取微信窗口信息"
+    }
+  ]
+}

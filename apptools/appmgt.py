@@ -87,7 +87,21 @@ class AppManager:
         # Find the AppTool subclass in the module
         instance: AppTool | None = None
         for _name, obj in inspect.getmembers(module, inspect.isclass):
-            if issubclass(obj, AppTool) and not inspect.isabstract(obj) and obj is not AppTool:
+            try:
+                is_tool = (
+                    issubclass(obj, AppTool)
+                    and not inspect.isabstract(obj)
+                    and obj is not AppTool
+                )
+            except TypeError:
+                logger.debug(
+                    "Skip non-class member %s in %s: type=%r",
+                    _name,
+                    module_name,
+                    type(obj).__name__,
+                )
+                continue
+            if is_tool:
                 try:
                     instance = obj()
                     break

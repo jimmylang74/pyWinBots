@@ -354,7 +354,7 @@ class WeixinTool(AppTool):
     # ------------------------------------------------------------------
 
     def _ensure_ready(self) -> bool:
-        """Try to connect or re-connect to the WeChat main window."""
+        """Try to connect, re-connect, or auto-launch the WeChat main window."""
         if self._main_window is not None:
             try:
                 if self._main_window.exists():
@@ -371,8 +371,13 @@ class WeixinTool(AppTool):
             self._main_window.wait("visible", timeout=5)
             return True
         except Exception:
-            logger.warning("Cannot connect to WeChat")
-            return False
+            logger.warning("Cannot connect to WeChat, attempting to launch")
+            try:
+                self.launch_weixin()
+                return True
+            except Exception as launch_exc:
+                logger.error("Auto-launch WeChat failed: %s", launch_exc)
+                return False
 
     def _load_manifest(self) -> dict[str, Any]:
         """Load manifest.json from the same directory."""

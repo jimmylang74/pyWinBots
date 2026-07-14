@@ -13,6 +13,7 @@ pywinauto>=0.6.8
 uiautomation>=2.0.0
 pyautogui>=0.9.54
 pywin32>=306
+psutil>=5.9.0
 
 # Development
 pytest>=8.0.0

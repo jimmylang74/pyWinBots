@@ -7,6 +7,7 @@ using pywinauto (uia backend).
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,13 @@ from base.debug import get_logger
 
 logger = get_logger()
 
+_HAS_PSUTIL = False
+try:
+    import psutil
+    _HAS_PSUTIL = True
+except ImportError:
+    psutil = None  # type: ignore[assignment]
+
 _HAS_PYWINAUTO = False
 try:
     import pywinauto
@@ -28,6 +36,37 @@ try:
 except ImportError:
     pywinauto = None  # type: ignore[assignment]
     Application = object  # placeholder
+
+
+def _log_process_tree(parent_pid: int) -> None:
+    """Log the process tree rooted at *parent_pid* with window titles."""
+    if not _HAS_PSUTIL:
+        logger.debug("[process-tree] psutil not installed – skipping")
+        return
+
+    try:
+        parent = psutil.Process(parent_pid)
+    except psutil.NoSuchProcess:
+        logger.debug("[process-tree] PID %d not found", parent_pid)
+        return
+
+    def _walk(proc: psutil.Process, depth: int = 0) -> None:
+        prefix = "  " * depth
+        try:
+            name = proc.name()
+            status = proc.status()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return
+        logger.debug("[process-tree] %s├─ pid=%d  name=%r  status=%s", prefix, proc.pid, name, status)
+        try:
+            children = proc.children(recursive=False)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            children = []
+        for child in children:
+            _walk(child, depth + 1)
+
+    logger.debug("[process-tree] Process tree for parent pid=%d:", parent_pid)
+    _walk(parent)
 
 
 class WeixinTool(AppTool):
@@ -136,25 +175,59 @@ class WeixinTool(AppTool):
         if result is None:
             raise RuntimeError(f"启动失败: {app_path}")
 
-        # Wait for main window
-        try:
-            win = result.window(title_re="(WeChat|微信)")
-            win.wait("visible", timeout=30)
-            self._main_window = win
-            logger.info("WeChat launched successfully")
-            return "微信启动成功，请在手机上扫码登录"
-        except Exception as exc:
+        parent_pid = result.process
+        logger.debug("[launch_weixin DEBUG] Parent process: %d", parent_pid)
+        _log_process_tree(parent_pid)
+
+        title_pattern = "(?i)(wechat|微信)"
+        max_wait = 30
+        poll_interval = 2
+        win = None
+
+        desktop = Desktop(backend="uia")
+
+        for elapsed in range(0, max_wait, poll_interval):
             try:
-                windows = result.windows()
-                titles = [w.window_text() for w in windows]
-                logger.warning(
-                    "WeChat launched but main window not found: %s. "
-                    "Top-level windows: %s",
-                    exc, titles,
+                all_windows = desktop.windows()
+                logger.debug(
+                    "[launch_weixin DEBUG] t=%ds: %d desktop window(s):",
+                    elapsed, len(all_windows),
                 )
-            except Exception:
-                logger.warning("WeChat launched but main window not found: %s", exc)
-            raise RuntimeError("微信已启动，但未能检测到主窗口")
+                for w in all_windows:
+                    try:
+                        logger.debug("  title=%r  pid=%s", w.window_text(), w.process_id())
+                    except Exception:
+                        pass
+            except Exception as exc:
+                logger.debug("[launch_weixin DEBUG] t=%ds: desktop enumerate failed: %s", elapsed, exc)
+                all_windows = []
+
+            for w in all_windows:
+                try:
+                    title = w.window_text()
+                    if re.search(title_pattern, title):
+                        win = w
+                        logger.debug("[launch_weixin DEBUG] Matched: title=%r", title)
+                        break
+                except Exception:
+                    continue
+
+            if win is not None:
+                break
+
+            logger.debug(
+                "[launch_weixin DEBUG] No match in %d window(s) – retrying",
+                len(all_windows),
+            )
+            time.sleep(poll_interval)
+
+        if win is not None:
+            self._main_window = win
+            logger.info("WeChat launched successfully (title=%r)", win.window_text())
+            return "微信启动成功，请在手机上扫码登录"
+
+        logger.warning("WeChat launched but main window not found after %ds", max_wait)
+        raise RuntimeError("微信已启动，但未能检测到主窗口")
 
     def search_contact(self, name: str) -> str:
         """Search for a contact and open their chat window."""

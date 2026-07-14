@@ -30,7 +30,11 @@ class PyWinBotsServer:
     """
 
     def __init__(self, app_manager: AppManager | None = None) -> None:
-        self.mcp = FastMCP("pyWinBots")
+        self.mcp = FastMCP(
+            "pyWinBots",
+            host="0.0.0.0",
+            json_response=True,
+        )
         self.app_manager = app_manager or AppManager()
         self._setup_done = False
 
@@ -44,13 +48,8 @@ class PyWinBotsServer:
             logger.warning("setup() already called – skipping")
             return
 
-        logger.info("Setting up pyWinBots MCP server ...")
-
-        # Load plugins
         plugins = self.app_manager.load_all_plugins()
-        logger.info("Loaded %d plugins", len(plugins))
 
-        # Initialize each enabled plugin
         for plugin in plugins:
             if plugin.enabled:
                 try:
@@ -59,18 +58,12 @@ class PyWinBotsServer:
                     logger.error("Failed to init plugin %s: %s", plugin.name, exc)
                     plugin.enabled = False
 
-        # Register tools from all enabled plugins
         all_tools = self.app_manager.collect_all_tools()
         self._register_tools(all_tools)
 
-        # Register built-in tools (server info, plugin listing, etc.)
-        self._register_builtin_tools()
-
         self._setup_done = True
-        logger.info(
-            "pyWinBots server ready – %d tools available",
-            len(all_tools) + 5,  # approximate count including builtins
-        )
+        tool_names = ", ".join(all_tools.keys())
+        logger.info("MCP server ready – %d tools registered: %s", len(all_tools), tool_names)
 
     # ------------------------------------------------------------------
     # Tool registration
@@ -92,78 +85,6 @@ class PyWinBotsServer:
                 logger.error("Failed to register tool '%s': %s", tool_name, exc)
         logger.info("Registered %d tools from plugins", registered)
 
-    def _register_builtin_tools(self) -> None:
-        """Register pyWinBots built-in tools (info, plugin mgmt, etc.)."""
-
-        @self.mcp.tool(
-            name="pywinbots_list_plugins",
-            description="列出所有已加载的插件及其能力和启用状态",
-        )
-        def list_plugins() -> str:
-            plugins = self.app_manager.list_plugins_summary()
-            lines = ["已加载的插件:"]
-            for p in plugins:
-                status = "✅ 启用" if p["enabled"] else "⛔ 禁用"
-                lines.append(
-                    f"  - {p['display_name']} ({p['name']}) {status}"
-                )
-                for cap in p["capabilities"]:
-                    lines.append(f"      🔧 {cap}")
-            return "\n".join(lines) if lines else "未加载任何插件"
-
-        @self.mcp.tool(
-            name="pywinbots_get_plugin_info",
-            description="获取指定插件的详细信息，包括清单和能力",
-        )
-        def get_plugin_info(plugin_name: str) -> str:
-            info = self.app_manager.get_plugin_info(plugin_name)
-            if info is None:
-                return f"插件 '{plugin_name}' 未找到"
-            import json
-
-            return json.dumps(info, ensure_ascii=False, indent=2)
-
-        @self.mcp.tool(
-            name="pywinbots_enable_plugin",
-            description="启用一个已加载的插件",
-        )
-        def enable_plugin(plugin_name: str) -> str:
-            ok = self.app_manager.enable_plugin(plugin_name)
-            # Re-register tools (simple approach: re-setup)
-            if ok:
-                self._setup_done = False
-                self.setup()
-                return f"插件 '{plugin_name}' 已启用"
-            return f"无法启用插件 '{plugin_name}'"
-
-        @self.mcp.tool(
-            name="pywinbots_disable_plugin",
-            description="禁用一个已加载的插件",
-        )
-        def disable_plugin(plugin_name: str) -> str:
-            ok = self.app_manager.disable_plugin(plugin_name)
-            if ok:
-                # Regenerate tools without this plugin
-                self.mcp._tool_manager._tools.clear()
-                self._setup_done = False
-                self.setup()
-                return f"插件 '{plugin_name}' 已禁用"
-            return f"无法禁用插件 '{plugin_name}'"
-
-        @self.mcp.tool(
-            name="pywinbots_server_info",
-            description="获取 pyWinBots 服务器的版本和状态信息",
-        )
-        def server_info() -> str:
-            plugins = self.app_manager.get_all_plugins()
-            lines = [
-                "pyWinBots MCP Server",
-                f"  状态: 运行中",
-                f"  插件数: {len(plugins)}",
-                f"  启用插件: {sum(1 for p in plugins if p.enabled)}",
-            ]
-            return "\n".join(lines)
-
     # ------------------------------------------------------------------
     # Run
     # ------------------------------------------------------------------
@@ -180,8 +101,8 @@ class PyWinBotsServer:
 
         logger.info("Starting Streamable HTTP MCP server on %s:%s", host, port)
 
-        # FastMCP.run() doesn't accept host/port directly for streamable-http,
-        # so we get the underlying ASGI app and run it with uvicorn.
+        self._patch_mcp_for_debug()
+
         app = self.mcp.streamable_http_app()
 
         import uvicorn
@@ -193,3 +114,29 @@ class PyWinBotsServer:
             log_level="info",
             reload=False,
         )
+
+    def _patch_mcp_for_debug(self) -> None:
+        """Patch MCP server to log client requests and responses."""
+        mcp_server = self.mcp._mcp_server
+
+        if mcp_server.request_handlers is None:
+            return
+
+        from mcp import types
+
+        original_handler = mcp_server.request_handlers.get(types.ListToolsRequest)
+        if original_handler is None:
+            return
+
+        async def debug_list_tools_handler(req):
+            try:
+                result = await original_handler(req)
+                tools = result.root.tools
+                logger.info("[MCP] >>> Responding with %d tools: %s",
+                            len(tools), ", ".join(t.name for t in tools))
+                return result
+            except Exception as exc:
+                logger.error("[MCP] ListTools EXCEPTION: %s", exc, exc_info=True)
+                raise
+
+        mcp_server.request_handlers[types.ListToolsRequest] = debug_list_tools_handler

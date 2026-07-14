@@ -128,12 +128,13 @@ class WeixinTool(AppTool):
 
         # Launch
         app_path = self._manifest_data.get("app_path", "")
+        app_args = self._manifest_data.get("app_args", "")
         if not app_path:
-            return "错误: 未配置微信路径 (manifest.json 中的 app_path)"
+            raise RuntimeError("未配置微信路径 (manifest.json 中的 app_path)")
 
-        result = self._app_ops.app_launch(app_path, "weixin", timeout=30)
+        result = self._app_ops.app_launch(app_path, "weixin", timeout=30, args=app_args)
         if result is None:
-            return f"启动失败: {app_path}"
+            raise RuntimeError(f"启动失败: {app_path}")
 
         # Wait for main window
         try:
@@ -143,13 +144,22 @@ class WeixinTool(AppTool):
             logger.info("WeChat launched successfully")
             return "微信启动成功，请在手机上扫码登录"
         except Exception as exc:
-            logger.warning("WeChat launched but main window not found: %s", exc)
-            return "微信已启动，但未能检测到主窗口（可能正在更新或登录中）"
+            try:
+                windows = result.windows()
+                titles = [w.window_text() for w in windows]
+                logger.warning(
+                    "WeChat launched but main window not found: %s. "
+                    "Top-level windows: %s",
+                    exc, titles,
+                )
+            except Exception:
+                logger.warning("WeChat launched but main window not found: %s", exc)
+            raise RuntimeError("微信已启动，但未能检测到主窗口")
 
     def search_contact(self, name: str) -> str:
         """Search for a contact and open their chat window."""
         if not self._ensure_ready():
-            return "错误: 微信未启动或主窗口不可用"
+            raise RuntimeError("微信未启动或主窗口不可用")
 
         try:
             self._main_window.set_focus()
@@ -198,22 +208,19 @@ class WeixinTool(AppTool):
             except Exception as exc:
                 logger.warning("Fallback search failed: %s", exc)
 
-            return f"未找到联系人: {name}（搜索结果可能为空，请检查联系人名称）"
+            raise RuntimeError(f"未找到联系人: {name}")
 
         except Exception as exc:
             logger.error("search_contact failed: %s", exc)
-            return f"搜索联系人失败: {exc}"
+            raise
 
     def send_message(self, contact: str, message: str) -> str:
         """Send a text message to a contact."""
         if not self._ensure_ready():
-            return "错误: 微信未启动或主窗口不可用"
+            raise RuntimeError("微信未启动或主窗口不可用")
 
         try:
-            # Search and open chat
-            search_result = self.search_contact(contact)
-            if "未找到" in search_result:
-                return f"无法发送消息: {search_result}"
+            self.search_contact(contact)
             time.sleep(1)
 
             # The message input box is typically the last Edit control
@@ -243,16 +250,16 @@ class WeixinTool(AppTool):
                 )
                 return f"消息已成功发送给 {contact}"
             else:
-                return "错误: 未找到消息输入框"
+                raise RuntimeError("未找到消息输入框")
 
         except Exception as exc:
             logger.error("send_message failed: %s", exc)
-            return f"发送消息失败: {exc}"
+            raise
 
     def get_main_window_info(self) -> str:
         """Return info about the WeChat main window."""
         if not self._ensure_ready():
-            return "错误: 微信未启动或主窗口不可用"
+            raise RuntimeError("微信未启动或主窗口不可用")
 
         try:
             rect = self._main_window.rectangle()
@@ -266,7 +273,8 @@ class WeixinTool(AppTool):
             )
             return info
         except Exception as exc:
-            return f"获取窗口信息失败: {exc}"
+            logger.error("get_main_window_info failed: %s", exc)
+            raise
 
     # ------------------------------------------------------------------
     # Internal helpers

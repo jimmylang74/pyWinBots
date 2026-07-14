@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "微信 Windows 客户端自动化插件。支持启动微信、搜索联系人、发送消息。",
   "author": "pyWinBots",
-  "app_path": "C:\\Program Files (x86)\\Tencent\\WeChat\\WeChat.exe",
+  "app_path": "C:\\Program Files\\Tencent\\WeChat\\WeChat.exe",
   "min_sdk_version": "1.0.0",
   "backend": "uia",
   "capabilities": [

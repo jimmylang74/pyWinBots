@@ -71,10 +71,7 @@ def _clipboard_paste(text: str) -> None:
         capture_output=True, timeout=5,
     )
 
-SEARCH_BOX_OFFSET_X = 320
-SEARCH_BOX_OFFSET_Y = 100
-MESSAGE_INPUT_OFFSET_X = 600
-MESSAGE_INPUT_OFFSET_Y = 1500
+
 
 
 def _log_process_tree(parent_pid: int) -> None:
@@ -137,8 +134,18 @@ class WeixinTool(AppTool):
         # WeChat uses "WeChat" / "微信" as window title pattern
         self._main_window = None
 
+        # Default UI offsets (relative to main window top-left)
+        self._searchbox_offset = [320, 100]
+        self._messageinput_offset = [600, 1500]
+
     async def initialize(self) -> bool:
         self._manifest_data = self._load_manifest()
+        self._searchbox_offset = self._manifest_data.get(
+            "searchbox_offset", self._searchbox_offset
+        )
+        self._messageinput_offset = self._manifest_data.get(
+            "messageinput_offset", self._messageinput_offset
+        )
         logger.info("Weixin plugin initialized")
         return True
 
@@ -297,8 +304,8 @@ class WeixinTool(AppTool):
             logger.info("[search_contact] step 1/5 done (%s) - window rect=(%d,%d,%d,%d)",
                         elapsed(), rect.left, rect.top, rect.right, rect.bottom)
 
-            search_x = rect.left + SEARCH_BOX_OFFSET_X
-            search_y = rect.top + SEARCH_BOX_OFFSET_Y
+            search_x = rect.left + self._searchbox_offset[0]
+            search_y = rect.top + self._searchbox_offset[1]
             logger.info("[search_contact] step 2/5: click search box at (%d, %d) ...", search_x, search_y)
             pyautogui.click(search_x, search_y)
             time.sleep(0.5)
@@ -341,8 +348,8 @@ class WeixinTool(AppTool):
             time.sleep(0.5)
             rect = self._main_window.rectangle()
 
-            input_x = rect.left + MESSAGE_INPUT_OFFSET_X
-            input_y = rect.top + MESSAGE_INPUT_OFFSET_Y
+            input_x = rect.left + self._messageinput_offset[0]
+            input_y = rect.top + self._messageinput_offset[1]
             logger.info("[send_message] click input box at (%d, %d)", input_x, input_y)
             pyautogui.click(input_x, input_y)
             time.sleep(0.3)

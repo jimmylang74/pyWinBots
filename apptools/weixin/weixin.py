@@ -37,6 +37,45 @@ except ImportError:
     pywinauto = None  # type: ignore[assignment]
     Application = object  # placeholder
 
+_HAS_PYAUTOGUI = False
+try:
+    import pyautogui
+    pyautogui.FAILSAFE = False
+    _HAS_PYAUTOGUI = True
+except ImportError:
+    pyautogui = None  # type: ignore[assignment]
+
+_HAS_PYPERCLIP = False
+try:
+    import pyperclip
+    _HAS_PYPERCLIP = True
+except ImportError:
+    pyperclip = None  # type: ignore[assignment]
+
+
+def _clipboard_paste(text: str) -> None:
+    try:
+        import win32clipboard
+        win32clipboard.OpenClipboard()
+        win32clipboard.EmptyClipboard()
+        win32clipboard.SetClipboardText(text, win32clipboard.CF_UNICODETEXT)
+        win32clipboard.CloseClipboard()
+        return
+    except Exception:
+        pass
+
+    import subprocess
+    ps_cmd = f'Set-Clipboard -Value "{text}"'
+    subprocess.run(
+        ["powershell", "-NoProfile", "-Command", ps_cmd],
+        capture_output=True, timeout=5,
+    )
+
+SEARCH_BOX_OFFSET_X = 320
+SEARCH_BOX_OFFSET_Y = 100
+MESSAGE_INPUT_OFFSET_X = 600
+MESSAGE_INPUT_OFFSET_Y = 1500
+
 
 def _log_process_tree(parent_pid: int) -> None:
     """Log the process tree rooted at *parent_pid* with window titles."""
@@ -222,108 +261,100 @@ class WeixinTool(AppTool):
             time.sleep(poll_interval)
 
         if win is not None:
-            self._main_window = win
-            logger.info("WeChat launched successfully (title=%r)", win.window_text())
+            try:
+                pid = win.process_id()
+                app = Application(backend="uia")
+                app.connect(process=pid)
+                self._app_ops._apps["weixin"] = app
+                self._main_window = self._pick_main_window(app, title_pattern)
+                logger.info(
+                    "WeChat launched & connected via Application (pid=%d, title=%r)",
+                    pid, self._main_window.window_text(),
+                )
+            except Exception as exc:
+                logger.warning("Application.connect failed (%s), falling back to raw UIAWrapper", exc)
+                self._main_window = win
             return "微信启动成功，请在手机上扫码登录"
 
         logger.warning("WeChat launched but main window not found after %ds", max_wait)
         raise RuntimeError("微信已启动，但未能检测到主窗口")
 
     def search_contact(self, name: str) -> str:
-        """Search for a contact and open their chat window."""
         if not self._ensure_ready():
             raise RuntimeError("微信未启动或主窗口不可用")
+        if not _HAS_PYAUTOGUI:
+            raise RuntimeError("pyautogui 未安装，无法使用坐标定位")
+
+        t0 = time.monotonic()
+        def elapsed():
+            return f"{time.monotonic() - t0:.2f}s"
 
         try:
+            logger.info("[search_contact] step 1/5: set_focus ...")
             self._main_window.set_focus()
             time.sleep(0.5)
+            rect = self._main_window.rectangle()
+            logger.info("[search_contact] step 1/5 done (%s) - window rect=(%d,%d,%d,%d)",
+                        elapsed(), rect.left, rect.top, rect.right, rect.bottom)
 
-            # WeChat search is typically at the top of the main window
-            # It's an Edit control with specific automation properties
-            search_box = self._main_window.child_window(
-                control_type="Edit", found_index=0
-            )
-            search_box.wait("enabled", timeout=5)
-            search_box.click_input()
-            search_box.type_keys("^a{DELETE}", with_spaces=True)
-            time.sleep(0.3)
-            search_box.type_keys(name, with_spaces=True)
-            time.sleep(1.5)
+            search_x = rect.left + SEARCH_BOX_OFFSET_X
+            search_y = rect.top + SEARCH_BOX_OFFSET_Y
+            logger.info("[search_contact] step 2/5: click search box at (%d, %d) ...", search_x, search_y)
+            pyautogui.click(search_x, search_y)
+            time.sleep(0.5)
+            pyautogui.hotkey("ctrl", "a")
+            pyautogui.press("delete")
+            time.sleep(0.2)
+            logger.info("[search_contact] step 2/5 done (%s)", elapsed())
 
-            # Click the matching contact in search results
-            # Try ListItem first, then fallback to Text
-            try:
-                result_item = self._main_window.child_window(
-                    title=name,
-                    control_type="ListItem",
-                )
-                if result_item.exists(timeout=3):
-                    result_item.click_input()
-                    time.sleep(0.5)
-                    logger.info("Contact found: %s", name)
-                    return f"已找到联系人: {name}"
-            except Exception:
-                pass
+            logger.info("[search_contact] step 3/5: type name %r ...", name)
+            _clipboard_paste(name)
+            time.sleep(0.1)
+            pyautogui.hotkey("ctrl", "v")
+            time.sleep(2.0)
+            logger.info("[search_contact] step 3/5 done (%s)", elapsed())
 
-            # Fallback: try clicking the list item
-            try:
-                from pywinauto import Desktop
+            logger.info("[search_contact] step 4/5: press Enter ...")
+            pyautogui.press("enter")
+            time.sleep(1.0)
+            logger.info("[search_contact] step 4/5 done (%s)", elapsed())
 
-                desktop = Desktop(backend="uia")
-                items = desktop.windows(control_type="ListItem")
-                for item in items:
-                    txt = item.window_text()
-                    if name in txt:
-                        item.click_input()
-                        time.sleep(0.5)
-                        logger.info("Contact found (fallback): %s", name)
-                        return f"已找到联系人: {name}"
-            except Exception as exc:
-                logger.warning("Fallback search failed: %s", exc)
-
-            raise RuntimeError(f"未找到联系人: {name}")
+            logger.info("[search_contact] step 5/5: verify ...")
+            logger.info("[search_contact] DONE (%s) - 已点击联系人: %s", elapsed(), name)
+            return f"已找到联系人: {name}"
 
         except Exception as exc:
-            logger.error("search_contact failed: %s", exc)
+            logger.error("[search_contact] FAILED at (%s): %s", elapsed(), exc)
             raise
 
     def send_message(self, contact: str, message: str) -> str:
-        """Send a text message to a contact."""
         if not self._ensure_ready():
             raise RuntimeError("微信未启动或主窗口不可用")
+        if not _HAS_PYAUTOGUI:
+            raise RuntimeError("pyautogui 未安装，无法使用坐标定位")
 
         try:
             self.search_contact(contact)
             time.sleep(1)
 
-            # The message input box is typically the last Edit control
-            # in the chat window.  WeChat uses a rich-edit control.
             self._main_window.set_focus()
             time.sleep(0.5)
+            rect = self._main_window.rectangle()
 
-            edits = self._main_window.descendants(control_type="Edit")
-            if not edits:
-                # Try RichEdit or custom edit
-                edits = self._main_window.descendants(control_type="Document")
+            input_x = rect.left + MESSAGE_INPUT_OFFSET_X
+            input_y = rect.top + MESSAGE_INPUT_OFFSET_Y
+            logger.info("[send_message] click input box at (%d, %d)", input_x, input_y)
+            pyautogui.click(input_x, input_y)
+            time.sleep(0.3)
 
-            if edits:
-                # Usually the last edit control is the message input
-                input_box = edits[-1]
-                input_box.click_input()
-                time.sleep(0.3)
-                input_box.type_keys(message, with_spaces=True)
-                time.sleep(0.5)
+            _clipboard_paste(message)
+            time.sleep(0.1)
+            pyautogui.hotkey("ctrl", "v")
+            time.sleep(0.5)
 
-                # Send with Enter
-                import pyautogui
-
-                pyautogui.press("enter")
-                logger.info(
-                    "Message sent to %s (%d chars)", contact, len(message)
-                )
-                return f"消息已成功发送给 {contact}"
-            else:
-                raise RuntimeError("未找到消息输入框")
+            pyautogui.press("enter")
+            logger.info("Message sent to %s (%d chars)", contact, len(message))
+            return f"消息已成功发送给 {contact}"
 
         except Exception as exc:
             logger.error("send_message failed: %s", exc)
@@ -353,21 +384,82 @@ class WeixinTool(AppTool):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _ensure_ready(self) -> bool:
-        """Try to connect, re-connect, or auto-launch the WeChat main window."""
-        if self._main_window is not None:
+    def _pick_main_window(self, app: Application, title_pattern: str):
+        candidates = app.windows()
+        logger.debug("[_pick_main_window] %d window(s) from Application:", len(candidates))
+        best_title = None
+        best_area = 0
+        for w in candidates:
             try:
-                if self._main_window.exists():
-                    return True
-            except Exception:
-                pass
+                title = w.window_text()
+                rect = w.rectangle()
+                area = rect.width() * rect.height()
+                visible = w.is_visible()
+                logger.debug(
+                    "  title=%r  rect=(%d,%d,%d,%d)  area=%d  visible=%s",
+                    title, rect.left, rect.top, rect.right, rect.bottom, area, visible,
+                )
+                if visible and area > best_area:
+                    best_title = title
+                    best_area = area
+            except Exception as exc:
+                logger.debug("  (read failed: %s)", exc)
+        if best_title is None:
+            logger.warning("[_pick_main_window] no visible window found, falling back to regex")
+            return app.window(title_re=title_pattern)
+        logger.debug("[_pick_main_window] selected: title=%r  area=%d", best_title, best_area)
+        return app.window(title=best_title)
 
-        # Re-connect attempt
+    def _log_window_layout(self, window, depth: int = 0, max_depth: int = 5) -> None:
+        prefix = "  " * depth
+        try:
+            children = window.children()
+        except Exception:
+            children = []
+        for child in children:
+            try:
+                ctrl = child.element_info.control_type
+                title = child.window_text()[:40]
+                auto_id = getattr(child.element_info, "automation_id", "")
+                class_name = getattr(child.element_info, "class_name", "")
+                rect = child.rectangle()
+                logger.debug(
+                    "%s[%s] title=%r  auto_id=%r  class=%r  rect=(%d,%d,%d,%d)",
+                    prefix, ctrl, title, auto_id, class_name,
+                    rect.left, rect.top, rect.right, rect.bottom,
+                )
+                if depth < max_depth:
+                    self._log_window_layout(child, depth + 1, max_depth)
+            except Exception as exc:
+                logger.debug("%s  (read failed: %s)", prefix, exc)
+
+    def _is_valid_main_window(self, window) -> bool:
+        if window is None:
+            return False
+        try:
+            if not window.exists():
+                return False
+            rect = window.rectangle()
+            area = rect.width() * rect.height()
+            if area < 10000:
+                logger.debug(
+                    "[_ensure_ready] cached window too small (%dx%d=%d), rejecting",
+                    rect.width(), rect.height(), area,
+                )
+                return False
+            return True
+        except Exception:
+            return False
+
+    def _ensure_ready(self) -> bool:
+        if self._is_valid_main_window(self._main_window):
+            return True
+
         try:
             app = Application(backend="uia")
             app.connect(title_re="(WeChat|微信)")
             self._app_ops._apps["weixin"] = app
-            self._main_window = app.window(title_re="(WeChat|微信)")
+            self._main_window = self._pick_main_window(app, "(WeChat|微信)")
             self._main_window.wait("visible", timeout=5)
             return True
         except Exception:

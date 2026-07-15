@@ -60,6 +60,7 @@ export function renderPlugins() {
             <span class="toggle-label" id="togLabel-${p.name}">${p.enabled ? '已启用' : '已禁用'}</span>
             <button class="detail-btn" data-action="detail" data-plugin="${p.name}">Detail</button>
             <button class="detail-btn config-btn" data-action="config" data-plugin="${p.name}">⚙ Config</button>
+            <button class="detail-btn location-btn" data-action="location" data-plugin="${p.name}">Location Record</button>
           </div>
         </div>
         <div class="status"><span class="dot ${dotCls}"></span> ${statusText}</div>

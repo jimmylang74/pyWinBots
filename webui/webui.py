@@ -16,6 +16,7 @@ Or programmatically:
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -28,19 +29,43 @@ _root = Path(__file__).resolve().parent.parent
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request, Form, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from apptools.appmgt import AppManager
 from base.debug import get_logger
+from apptools.location_recorder import LocationRecorder
 
 logger = get_logger()
 
 _templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 _static_root = Path(__file__).parent / "static"
 
+_active_recorders: dict[str, LocationRecorder] = {}
+
+def _save_location(plugin_name: str, loc_name: str, x: int, y: int):
+    plugin_dir = Path(__file__).parent.parent / "apptools" / plugin_name
+    manifest_path = plugin_dir / "manifest.json"
+    
+    if not manifest_path.exists():
+        logger.error("manifest not found for %s", plugin_name)
+        return
+        
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if "locations" not in data:
+            data["locations"] = {}
+        
+        data["locations"][loc_name] = [x, y]
+        
+        manifest_path.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        logger.info("Saved location %s for %s: [%d, %d]", loc_name, plugin_name, x, y)
+    except Exception as exc:
+        logger.error("Failed to save location: %s", exc)
 
 # ---------------------------------------------------------------------------
 # App factory
@@ -62,9 +87,10 @@ def create_app(app_manager: AppManager | None = None) -> FastAPI:
 
             anyio.run(p.initialize)
 
+    version = "1.0.0"
     app = FastAPI(
         title="pyWinBots Web UI",
-        version="1.0.0",
+        version=version,
         description="Configuration management dashboard for pyWinBots",
     )
 
@@ -87,6 +113,7 @@ def create_app(app_manager: AppManager | None = None) -> FastAPI:
                 "plugins": plugins,
                 "plugin_count": len(plugins),
                 "app_title": "pyWinBots",
+                "version": version,
             },
         )
 
@@ -162,6 +189,59 @@ def create_app(app_manager: AppManager | None = None) -> FastAPI:
         except Exception as exc:
             return JSONResponse({"error": f"Failed to save config: {exc}"}, status_code=500)
 
+    @app.websocket("/ws/location_record")
+    async def ws_location_record(websocket: WebSocket):
+        await websocket.accept()
+        plugin_name = ""
+        loc_name = ""
+        recorder = None
+        
+        try:
+            data = await websocket.receive_json()
+            plugin_name = data.get("plugin_name", "")
+            loc_name = data.get("location_name", "")
+            
+            if not plugin_name or not loc_name:
+                await websocket.send_json({"type": "error", "message": "Missing plugin_name or location_name"})
+                return
+
+            recorder = LocationRecorder()
+            _active_recorders[plugin_name] = recorder
+
+            loop = asyncio.get_running_loop()
+            
+            def on_status(status: str):
+                try:
+                    loop.call_soon_threadsafe(asyncio.ensure_future, 
+                        websocket.send_json({"type": "status", "status": status}))
+                except Exception:
+                    pass
+            
+            def on_result(name: str, x: int, y: int):
+                try:
+                    loop.call_soon_threadsafe(asyncio.ensure_future,
+                        websocket.send_json({"type": "result", "x": x, "y": y}))
+                    loop.call_soon_threadsafe(asyncio.ensure_future,
+                        asyncio.to_thread(_save_location, plugin_name, name, x, y))
+                except Exception:
+                    pass
+                
+            recorder.start_recording(loc_name, on_result, on_status)
+            
+            while recorder.is_running():
+                await asyncio.sleep(0.1)
+                
+        except WebSocketDisconnect:
+            pass
+        except Exception as e:
+            logger.error("WebSocket error: %s", e)
+        finally:
+            if plugin_name in _active_recorders:
+                recorder = _active_recorders[plugin_name]
+                if recorder.is_running():
+                    recorder.stop_recording()
+                del _active_recorders[plugin_name]
+
     @app.get("/logs", response_class=HTMLResponse, include_in_schema=False)
     async def logs_page(request: Request, lines: int = 100):
         logs = _read_recent_logs(lines)
@@ -173,6 +253,7 @@ def create_app(app_manager: AppManager | None = None) -> FastAPI:
                 "tab": "logs",
                 "logs": logs,
                 "app_title": "pyWinBots - Logs",
+                "version": version,
             },
         )
 

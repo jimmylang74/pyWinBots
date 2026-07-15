@@ -138,7 +138,38 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,'Segoe UI'
   </div>
 </div>
 
-<script type="module" src="/static/js/app.js"></script>
+<script type="module" src="/static/js/app.js?v={{ version }}"></script>
+
+<div id="locationModal" class="modal-overlay">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-header">
+      <h2 id="locationModalTitle">Location Record</h2>
+      <button class="close-btn" id="locationModalClose">&times;</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <input type="hidden" id="locPluginName">
+      <div>
+        <label style="font-size:12px;color:var(--text-dim);display:block;margin-bottom:4px">Location Name</label>
+        <input type="text" id="locName" placeholder="e.g. send_button" style="width:100%;padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text)">
+      </div>
+      <div style="display:flex;gap:12px;">
+        <div style="flex:1">
+          <label style="font-size:12px;color:var(--text-dim);display:block;margin-bottom:4px">X (Auto)</label>
+          <input type="text" id="locX" disabled style="width:100%;padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text-dim)">
+        </div>
+        <div style="flex:1">
+          <label style="font-size:12px;color:var(--text-dim);display:block;margin-bottom:4px">Y (Auto)</label>
+          <input type="text" id="locY" disabled style="width:100%;padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text-dim)">
+        </div>
+      </div>
+      <div style="margin-top:8px;display:flex;gap:8px">
+        <button id="btnStartLoc" style="flex:1;padding:10px;background:var(--green);color:#000;border:none;border-radius:var(--radius);font-weight:600;cursor:pointer">Start Recording</button>
+        <button id="btnStopLoc" disabled style="flex:1;padding:10px;background:var(--surface2);color:var(--text);border:none;border-radius:var(--radius);font-weight:600;cursor:pointer">Stop Recording</button>
+      </div>
+      <div id="locStatus" style="font-size:12px;color:var(--text-dim);margin-top:8px;min-height:16px"></div>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>

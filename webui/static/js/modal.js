@@ -55,11 +55,12 @@ export async function showConfigEditor(name) {
         <button id="saveConfigBtn"
           style="background:var(--primary);border:none;color:#fff;padding:8px 20px;
                  border-radius:var(--radius);cursor:pointer;font-size:14px">保存</button>
-        <button onclick="import('${esc('./modal.js')}').then(m=>m.closeDetail())"
+        <button id="cancelConfigBtn"
           style="background:var(--surface2);border:none;color:var(--text);padding:8px 20px;
                  border-radius:var(--radius);cursor:pointer;font-size:14px">取消</button>
       </div>`;
     document.getElementById('saveConfigBtn').addEventListener('click', () => saveConfig(name));
+    document.getElementById('cancelConfigBtn').addEventListener('click', closeDetail);
   } catch (e) {
     bodyEl.innerHTML = `<p style="color:var(--red)">加载配置失败: ${e.message}</p>`;
   }

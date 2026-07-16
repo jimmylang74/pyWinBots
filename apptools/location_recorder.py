@@ -110,10 +110,44 @@ class LocationRecorder:
         GetWindowTextW.argtypes = [ctypes.wintypes.HWND, ctypes.c_wchar_p, ctypes.c_int]
         GetWindowTextW.restype = ctypes.c_int
 
+        GetClassNameW = user32.GetClassNameW
+        GetClassNameW.argtypes = [ctypes.wintypes.HWND, ctypes.c_wchar_p, ctypes.c_int]
+        GetClassNameW.restype = ctypes.c_int
+
+        EnumWindows = user32.EnumWindows
+        IsWindowVisible = user32.IsWindowVisible
+
         GA_ROOT = 1
+        ENUMPROC = ctypes.WINFUNCTYPE(
+            ctypes.c_bool,
+            ctypes.wintypes.HWND,
+            ctypes.wintypes.LPARAM,
+        )
         last_move_time = time.monotonic()
         last_x = last_y = 0
         idle_logged = True
+
+        def _find_titled_window_at(x_coord, y_coord):
+            found = [None]
+
+            def _cb(hwnd, _lparam):
+                if not IsWindowVisible(hwnd):
+                    return True
+                b = ctypes.create_unicode_buffer(256)
+                GetWindowTextW(hwnd, b, 256)
+                if not b.value:
+                    return True
+                r = ctypes.wintypes.RECT()
+                if not GetWindowRect(hwnd, ctypes.byref(r)):
+                    return True
+                if r.left <= x_coord <= r.right and r.top <= y_coord <= r.bottom:
+                    found[0] = hwnd
+                    return False
+                return True
+
+            cb = ENUMPROC(_cb)
+            EnumWindows(cb, 0)
+            return found[0]
 
         while self._running:
             now = time.monotonic()
@@ -128,6 +162,24 @@ class LocationRecorder:
                 hwnd = WindowFromPoint(pt)
                 if hwnd:
                     hwnd = GetAncestor(hwnd, GA_ROOT)
+
+                # WindowFromPoint may hit DWM ghost windows (#32769) or other
+                # system overlays that have no title. When that happens,
+                # enumerate visible top-level windows and find the first one
+                # with a title that actually contains the cursor point.
+                if hwnd:
+                    buf = ctypes.create_unicode_buffer(256)
+                    GetWindowTextW(hwnd, buf, 256)
+                    if not buf.value:
+                        cls_buf = ctypes.create_unicode_buffer(256)
+                        GetClassNameW(hwnd, cls_buf, 256)
+                        logger.debug(
+                            "[LR] HWND 0x%X has no title (class='%s'), "
+                            "scanning visible windows at (%d,%d)",
+                            hwnd, cls_buf.value, x, y,
+                        )
+                        hwnd = _find_titled_window_at(x, y)
+
                 if hwnd:
                     rect = ctypes.wintypes.RECT()
                     GetWindowRect(hwnd, ctypes.byref(rect))

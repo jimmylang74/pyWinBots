@@ -217,12 +217,12 @@ def create_app(app_manager: AppManager | None = None) -> FastAPI:
                 except Exception:
                     pass
             
-            def on_result(name: str, x: int, y: int):
+            def on_result(result):
                 try:
                     loop.call_soon_threadsafe(asyncio.ensure_future,
-                        websocket.send_json({"type": "result", "x": x, "y": y}))
+                        websocket.send_json({"type": "result", "x": result.x, "y": result.y}))
                     loop.call_soon_threadsafe(asyncio.ensure_future,
-                        asyncio.to_thread(_save_location, plugin_name, name, x, y))
+                        asyncio.to_thread(_save_location, plugin_name, result.name, result.x, result.y))
                 except Exception:
                     pass
                 
@@ -256,6 +256,21 @@ def create_app(app_manager: AppManager | None = None) -> FastAPI:
                 "version": version,
             },
         )
+
+    # Auto-start location recorder with name "test" on startup
+    _auto_recorder: LocationRecorder | None = None
+    if sys.platform == "win32":
+        try:
+            _auto_recorder = LocationRecorder(auto_start_name="test")
+        except Exception as exc:
+            logger.error("Failed to auto-start location recorder: %s", exc)
+
+    # Register shutdown handler to stop recorder
+    @app.on_event("shutdown")
+    def _on_shutdown():
+        nonlocal _auto_recorder
+        if _auto_recorder and _auto_recorder.is_running():
+            _auto_recorder.stop_recording()
 
     return app
 

@@ -8,8 +8,14 @@
   "app_args": "--scene=taskbarpins",
   "min_sdk_version": "1.0.0",
   "backend": "uia",
-  "searchbox_offset": [320, 100],
-  "messageinput_offset": [600, 1500],
+  "searchbox_offset": [
+    320,
+    100
+  ],
+  "messageinput_offset": [
+    600,
+    1500
+  ],
   "capabilities": [
     "weixin_launch",
     "weixin_search_contact",
@@ -50,5 +56,11 @@
       "description": "获取微信主窗口信息（位置、大小、标题）",
       "params": []
     }
+  },
+  "locations": {
+    "messageinput_offset": [
+      1048,
+      1235
+    ]
   }
 }

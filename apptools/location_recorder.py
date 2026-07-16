@@ -79,21 +79,25 @@ class LocationRecorder:
         def _poll():
             x = ctypes.c_int(0)
             y = ctypes.c_int(0)
-            last_move_time = time.monotonic()
-            last_x = last_y = 0
-            idle_logged = True
+            left = ctypes.c_int(0)
+            top = ctypes.c_int(0)
+            right = ctypes.c_int(0)
+            bottom = ctypes.c_int(0)
+            name_buf = ctypes.create_unicode_buffer(256)
 
             while self._running:
-                if dll.HasNewEvent():
-                    dll.GetMousePos(ctypes.byref(x), ctypes.byref(y))
-                    self._last_mouse_x = x.value
-                    self._last_mouse_y = y.value
-                    last_move_time = time.monotonic()
-                    last_x, last_y = x.value, y.value
-                    idle_logged = False
-                elif not idle_logged and (time.monotonic() - last_move_time) >= 1.0:
-                    logger.info("[LR] Mouse idle at (%d, %d)", last_x, last_y)
-                    idle_logged = True
+                if dll.HasWindowInfo():
+                    hwnd = dll.GetIdleWindowHandle()
+                    dll.GetIdleWindowRect(
+                        ctypes.byref(left), ctypes.byref(top),
+                        ctypes.byref(right), ctypes.byref(bottom)
+                    )
+                    dll.GetIdleWindowName(name_buf, 256)
+                    logger.info(
+                        "[LR] Idle window: hwnd=%s name='%s' rect=(%d,%d,%d,%d)",
+                        hwnd, name_buf.value,
+                        left.value, top.value, right.value, bottom.value
+                    )
                 time.sleep(0.1)
 
         self._poll_thread = threading.Thread(target=_poll, daemon=True)

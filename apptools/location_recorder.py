@@ -273,6 +273,14 @@ class LocationRecorder:
         last_move_time = time.monotonic()
         last_x = last_y = 0
         idle_logged = True
+        skip_titles = {"Program Manager"}
+
+        def _is_skippable(hwnd, title):
+            if not title or title in skip_titles:
+                return True
+            if self._overlay_hwnd and hwnd == self._overlay_hwnd:
+                return True
+            return False
 
         def _find_titled_window_at(x_coord, y_coord):
             found = [None]
@@ -282,7 +290,7 @@ class LocationRecorder:
                     return True
                 b = ctypes.create_unicode_buffer(256)
                 GetWindowTextW(hwnd, b, 256)
-                if not b.value:
+                if _is_skippable(hwnd, b.value):
                     return True
                 r = ctypes.wintypes.RECT()
                 if not GetWindowRect(hwnd, ctypes.byref(r)):
@@ -324,13 +332,13 @@ class LocationRecorder:
                 if hwnd:
                     buf = ctypes.create_unicode_buffer(256)
                     GetWindowTextW(hwnd, buf, 256)
-                    if not buf.value:
+                    if _is_skippable(hwnd, buf.value):
                         cls_buf = ctypes.create_unicode_buffer(256)
                         GetClassNameW(hwnd, cls_buf, 256)
                         logger.debug(
-                            "[LR] HWND 0x%X has no title (class='%s'), "
+                            "[LR] HWND 0x%X title='%s' class='%s' skipped, "
                             "scanning visible windows at (%d,%d)",
-                            hwnd, cls_buf.value, x, y,
+                            hwnd, buf.value, cls_buf.value, x, y,
                         )
                         hwnd = _find_titled_window_at(x, y)
 

@@ -3,6 +3,5 @@ __pycache__
 .omo/
 .pywinbots/
 *.log
-*.dll
 *.a
 

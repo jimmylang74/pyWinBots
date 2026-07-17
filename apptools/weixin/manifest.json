@@ -61,6 +61,10 @@
     "messageinput_offset": [
       1048,
       1235
+    ],
+    "click_offset": [
+      837,
+      1415
     ]
   }
 }

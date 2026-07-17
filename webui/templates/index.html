@@ -150,21 +150,28 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,'Segoe UI'
       <input type="hidden" id="locPluginName">
       <div>
         <label style="font-size:12px;color:var(--text-dim);display:block;margin-bottom:4px">Location Name</label>
-        <input type="text" id="locName" placeholder="e.g. send_button" style="width:100%;padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text)">
+        <select id="locNameSelect" style="width:100%;padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:13px">
+          <option value="" disabled selected>加载中...</option>
+        </select>
+        <input type="text" id="locNameNew" placeholder="或输入新名称" style="width:100%;padding:8px;margin-top:6px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:13px;display:none">
       </div>
       <div style="display:flex;gap:12px;">
         <div style="flex:1">
-          <label style="font-size:12px;color:var(--text-dim);display:block;margin-bottom:4px">X (Auto)</label>
+          <label style="font-size:12px;color:var(--text-dim);display:block;margin-bottom:4px">X (Relative)</label>
           <input type="text" id="locX" disabled style="width:100%;padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text-dim)">
         </div>
         <div style="flex:1">
-          <label style="font-size:12px;color:var(--text-dim);display:block;margin-bottom:4px">Y (Auto)</label>
+          <label style="font-size:12px;color:var(--text-dim);display:block;margin-bottom:4px">Y (Relative)</label>
           <input type="text" id="locY" disabled style="width:100%;padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text-dim)">
         </div>
       </div>
+      <div>
+        <label style="font-size:12px;color:var(--text-dim);display:block;margin-bottom:4px">Window</label>
+        <input type="text" id="locWindow" disabled style="width:100%;padding:8px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;color:var(--text-dim);font-size:12px">
+      </div>
       <div style="margin-top:8px;display:flex;gap:8px">
-        <button id="btnStartLoc" style="flex:1;padding:10px;background:var(--green);color:#000;border:none;border-radius:var(--radius);font-weight:600;cursor:pointer">Start Recording</button>
-        <button id="btnStopLoc" disabled style="flex:1;padding:10px;background:var(--surface2);color:var(--text);border:none;border-radius:var(--radius);font-weight:600;cursor:pointer">Stop Recording</button>
+        <button id="btnStartLoc" style="flex:1;padding:10px;background:var(--green);color:#000;border:none;border-radius:var(--radius);font-weight:600;cursor:pointer">Start Record</button>
+        <button id="btnCloseLoc" style="flex:1;padding:10px;background:var(--surface2);color:var(--text);border:none;border-radius:var(--radius);font-weight:600;cursor:pointer;display:none">Close</button>
       </div>
       <div id="locStatus" style="font-size:12px;color:var(--text-dim);margin-top:8px;min-height:16px"></div>
     </div>

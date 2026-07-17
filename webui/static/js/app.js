@@ -2,6 +2,7 @@
 import { loadPlugins, setSearchQuery, togglePlugin } from './dashboard.js';
 import { loadLogs, startLogRefresh, stopLogRefresh } from './logs.js';
 import { showDetail, showConfigEditor, closeDetail } from './modal.js';
+import { api } from './api.js';
 
 // ---- toast (shared) ----
 let _toastTimer = null;
@@ -48,6 +49,10 @@ document.addEventListener('click', e => {
     closeLocationModal();
     return;
   }
+  if (e.target.closest('#btnCloseLoc')) {
+    closeLocationModal();
+    return;
+  }
   if (e.target.closest('#modalClose') || e.target.closest('.modal-overlay') === e.target) closeDetail();
 });
 
@@ -58,6 +63,17 @@ document.addEventListener('change', e => {
     return;
   }
   if (e.target.id === 'autoRefresh') startLogRefresh();
+
+  if (e.target.id === 'locNameSelect') {
+    const newInput = document.getElementById('locNameNew');
+    if (e.target.value === '__new__') {
+      newInput.style.display = 'block';
+      newInput.focus();
+    } else {
+      newInput.style.display = 'none';
+      newInput.value = '';
+    }
+  }
 });
 
 document.getElementById('searchInput').addEventListener('input', e => {
@@ -68,89 +84,117 @@ document.querySelectorAll('.nav button').forEach(btn => {
   btn.addEventListener('click', () => switchTab(btn.dataset.page));
 });
 
-let _locWs = null;
+// ---- Location Record ----
 let _locPlugin = '';
 
-function openLocationModal(pluginName) {
+async function openLocationModal(pluginName) {
   _locPlugin = pluginName;
   const modal = document.getElementById('locationModal');
   document.getElementById('locPluginName').value = pluginName;
-  document.getElementById('locName').value = '';
   document.getElementById('locX').value = '';
   document.getElementById('locY').value = '';
+  document.getElementById('locWindow').value = '';
   document.getElementById('locStatus').textContent = '';
-  document.getElementById('btnStartLoc').disabled = false;
-  document.getElementById('btnStopLoc').disabled = true;
-  
+  document.getElementById('locNameNew').value = '';
+  document.getElementById('locNameNew').style.display = 'none';
+
+  const btnStart = document.getElementById('btnStartLoc');
+  const btnClose = document.getElementById('btnCloseLoc');
+  btnStart.style.display = '';
+  btnStart.disabled = false;
+  btnClose.style.display = 'none';
+
+  const select = document.getElementById('locNameSelect');
+  select.innerHTML = '<option value="" disabled selected>加载中...</option>';
+
   modal.classList.add('open');
-  
-  document.getElementById('btnStartLoc').onclick = startLocRecording;
-  document.getElementById('btnStopLoc').onclick = stopLocRecording;
+
+  try {
+    const data = await api(`/api/plugins/${pluginName}/locations`);
+    const locations = data.locations || {};
+    const names = Object.keys(locations);
+
+    select.innerHTML = '';
+    if (names.length > 0) {
+      names.forEach(n => {
+        const opt = document.createElement('option');
+        opt.value = n;
+        opt.textContent = `${n}  [${locations[n][0]}, ${locations[n][1]}]`;
+        select.appendChild(opt);
+      });
+    }
+    const newOpt = document.createElement('option');
+    newOpt.value = '__new__';
+    newOpt.textContent = '+ 新建...';
+    select.appendChild(newOpt);
+
+    if (names.length > 0) {
+      select.value = names[0];
+    } else {
+      select.value = '__new__';
+      document.getElementById('locNameNew').style.display = 'block';
+      document.getElementById('locNameNew').focus();
+    }
+  } catch (e) {
+    select.innerHTML = '<option value="__new__" selected>+ 新建...</option>';
+    document.getElementById('locNameNew').style.display = 'block';
+  }
 }
 
 function closeLocationModal() {
   document.getElementById('locationModal').classList.remove('open');
-  if (_locWs) {
-    _locWs.close();
-    _locWs = null;
-  }
 }
 
-function startLocRecording() {
-  const locName = document.getElementById('locName').value.trim();
+function _getSelectedName() {
+  const select = document.getElementById('locNameSelect');
+  if (select.value === '__new__') {
+    return document.getElementById('locNameNew').value.trim();
+  }
+  return select.value;
+}
+
+async function startLocRecording() {
+  const locName = _getSelectedName();
   if (!locName) {
-    toast('Please enter a location name', 'err');
+    toast('请输入或选择一个 Location 名称', 'err');
     return;
   }
 
-  document.getElementById('btnStartLoc').disabled = true;
-  document.getElementById('btnStopLoc').disabled = false;
-  document.getElementById('locStatus').textContent = 'Connecting...';
+  const btnStart = document.getElementById('btnStartLoc');
+  const btnClose = document.getElementById('btnCloseLoc');
+  btnStart.disabled = true;
+  btnStart.textContent = 'Recording...';
+  document.getElementById('locStatus').textContent = '等待鼠标点击...';
 
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  _locWs = new WebSocket(`${protocol}//${window.location.host}/ws/location_record`);
+  try {
+    const data = await api(`/api/plugins/${_locPlugin}/record`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location_name: locName }),
+    });
 
-  _locWs.onopen = () => {
-    _locWs.send(JSON.stringify({
-      plugin_name: _locPlugin,
-      location_name: locName
-    }));
-  };
+    document.getElementById('locX').value = data.x;
+    document.getElementById('locY').value = data.y;
+    document.getElementById('locWindow').value =
+      data.title ? `${data.title}  (0x${data.handle})` : '';
+    document.getElementById('locStatus').textContent =
+      `已记录: (${data.x}, ${data.y})`;
 
-  _locWs.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    if (data.type === 'status') {
-      document.getElementById('locStatus').textContent = `Status: ${data.status}`;
-    } else if (data.type === 'result') {
-      document.getElementById('locX').value = data.x;
-      document.getElementById('locY').value = data.y;
-      document.getElementById('locStatus').textContent = `Saved! X: ${data.x}, Y: ${data.y}`;
-      toast('Location recorded successfully!');
-      setTimeout(closeLocationModal, 1000);
-    } else if (data.type === 'error') {
-      document.getElementById('locStatus').textContent = `Error: ${data.message}`;
-      document.getElementById('btnStartLoc').disabled = false;
-      document.getElementById('btnStopLoc').disabled = true;
-    }
-  };
-
-  _locWs.onclose = () => {
-    document.getElementById('btnStartLoc').disabled = false;
-    document.getElementById('btnStopLoc').disabled = true;
-  };
-}
-
-function stopLocRecording() {
-  if (_locWs) {
-    _locWs.close();
-    _locWs = null;
-    document.getElementById('btnStartLoc').disabled = false;
-    document.getElementById('btnStopLoc').disabled = true;
-    document.getElementById('locStatus').textContent = 'Recording stopped.';
+    btnStart.style.display = 'none';
+    btnClose.style.display = '';
+    btnClose.focus();
+    toast(`Location "${locName}" 已保存`);
+  } catch (e) {
+    document.getElementById('locStatus').textContent = `错误: ${e.message}`;
+    btnStart.disabled = false;
+    btnStart.textContent = 'Start Record';
+    toast('录制失败', 'err');
   }
 }
 
-document.addEventListener('keydown', e => { 
+document.getElementById('btnStartLoc').onclick = startLocRecording;
+
+document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     if (document.getElementById('locationModal').classList.contains('open')) {
       closeLocationModal();

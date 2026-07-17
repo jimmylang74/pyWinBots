@@ -29,43 +29,19 @@ _root = Path(__file__).resolve().parent.parent
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-from fastapi import FastAPI, Request, Form, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from apptools.appmgt import AppManager
 from base.debug import get_logger
-from apptools.location_recorder import LocationRecorder
+from apptools.location_recorder import record_click
 
 logger = get_logger()
 
 _templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 _static_root = Path(__file__).parent / "static"
-
-_active_recorders: dict[str, LocationRecorder] = {}
-
-def _save_location(plugin_name: str, loc_name: str, x: int, y: int):
-    plugin_dir = Path(__file__).parent.parent / "apptools" / plugin_name
-    manifest_path = plugin_dir / "manifest.json"
-    
-    if not manifest_path.exists():
-        logger.error("manifest not found for %s", plugin_name)
-        return
-        
-    try:
-        data = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if "locations" not in data:
-            data["locations"] = {}
-        
-        data["locations"][loc_name] = [x, y]
-        
-        manifest_path.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-        logger.info("Saved location %s for %s: [%d, %d]", loc_name, plugin_name, x, y)
-    except Exception as exc:
-        logger.error("Failed to save location: %s", exc)
 
 # ---------------------------------------------------------------------------
 # App factory
@@ -87,7 +63,7 @@ def create_app(app_manager: AppManager | None = None) -> FastAPI:
 
             anyio.run(p.initialize)
 
-    version = "1.0.0"
+    version = "1.0.1"
     app = FastAPI(
         title="pyWinBots Web UI",
         version=version,
@@ -162,6 +138,18 @@ def create_app(app_manager: AppManager | None = None) -> FastAPI:
         logs = _read_recent_logs(lines)
         return {"logs": logs}
 
+    @app.get("/api/plugins/{name}/locations", response_class=JSONResponse)
+    async def api_get_plugin_locations(name: str):
+        plugin_dir = Path(__file__).parent.parent / "apptools" / name
+        manifest_path = plugin_dir / "manifest.json"
+        if not manifest_path.exists():
+            return JSONResponse({"error": "manifest not found"}, status_code=404)
+        try:
+            data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            return {"locations": data.get("locations", {})}
+        except Exception as exc:
+            return JSONResponse({"error": f"Failed to read config: {exc}"}, status_code=500)
+
     @app.get("/api/plugins/{name}/config", response_class=JSONResponse)
     async def api_get_plugin_config(name: str):
         plugin_dir = Path(__file__).parent.parent / "apptools" / name
@@ -189,58 +177,46 @@ def create_app(app_manager: AppManager | None = None) -> FastAPI:
         except Exception as exc:
             return JSONResponse({"error": f"Failed to save config: {exc}"}, status_code=500)
 
-    @app.websocket("/ws/location_record")
-    async def ws_location_record(websocket: WebSocket):
-        await websocket.accept()
-        plugin_name = ""
-        loc_name = ""
-        recorder = None
-        
-        try:
-            data = await websocket.receive_json()
-            plugin_name = data.get("plugin_name", "")
-            loc_name = data.get("location_name", "")
-            
-            if not plugin_name or not loc_name:
-                await websocket.send_json({"type": "error", "message": "Missing plugin_name or location_name"})
-                return
+    @app.post("/api/plugins/{name}/record", response_class=JSONResponse)
+    async def api_record_location(name: str, request: Request):
+        """Launch mouse_overlay.exe, wait for first click, save & return coords."""
+        body = await request.json()
+        loc_name = body.get("location_name", "")
+        timeout = float(body.get("timeout", 0))
 
-            recorder = LocationRecorder()
-            _active_recorders[plugin_name] = recorder
+        if not loc_name:
+            return JSONResponse(
+                {"error": "Missing location_name"}, status_code=400
+            )
 
-            loop = asyncio.get_running_loop()
-            
-            def on_status(status: str):
-                try:
-                    loop.call_soon_threadsafe(asyncio.ensure_future, 
-                        websocket.send_json({"type": "status", "status": status}))
-                except Exception:
-                    pass
-            
-            def on_result(result):
-                try:
-                    loop.call_soon_threadsafe(asyncio.ensure_future,
-                        websocket.send_json({"type": "result", "x": result.x, "y": result.y}))
-                    loop.call_soon_threadsafe(asyncio.ensure_future,
-                        asyncio.to_thread(_save_location, plugin_name, result.name, result.x, result.y))
-                except Exception:
-                    pass
-                
-            recorder.start_recording(loc_name, on_result, on_status)
-            
-            while recorder.is_running():
-                await asyncio.sleep(0.1)
-                
-        except WebSocketDisconnect:
-            pass
-        except Exception as e:
-            logger.error("WebSocket error: %s", e)
-        finally:
-            if plugin_name in _active_recorders:
-                recorder = _active_recorders[plugin_name]
-                if recorder.is_running():
-                    recorder.stop_recording()
-                del _active_recorders[plugin_name]
+        plugin_dir = Path(__file__).parent.parent / "apptools" / name
+        manifest_path = plugin_dir / "manifest.json"
+        if not manifest_path.exists():
+            return JSONResponse(
+                {"error": f"Plugin '{name}' manifest not found"}, status_code=404
+            )
+
+        result = await record_click(str(manifest_path), loc_name, timeout)
+
+        if result is None:
+            return JSONResponse(
+                {"error": "Recording failed"}, status_code=500
+            )
+
+        return {
+            "x": result.rel_x,
+            "y": result.rel_y,
+            "abs_x": result.abs_x,
+            "abs_y": result.abs_y,
+            "handle": result.handle,
+            "title": result.title,
+            "rect": {
+                "left": result.rect_left,
+                "top": result.rect_top,
+                "right": result.rect_right,
+                "bottom": result.rect_bottom,
+            },
+        }
 
     @app.get("/logs", response_class=HTMLResponse, include_in_schema=False)
     async def logs_page(request: Request, lines: int = 100):
@@ -257,20 +233,9 @@ def create_app(app_manager: AppManager | None = None) -> FastAPI:
             },
         )
 
-    # Auto-start location recorder with name "test" on startup
-    _auto_recorder: LocationRecorder | None = None
-    if sys.platform == "win32":
-        try:
-            _auto_recorder = LocationRecorder(auto_start_name="test")
-        except Exception as exc:
-            logger.error("Failed to auto-start location recorder: %s", exc)
-
-    # Register shutdown handler to stop recorder
     @app.on_event("shutdown")
     def _on_shutdown():
-        nonlocal _auto_recorder
-        if _auto_recorder and _auto_recorder.is_running():
-            _auto_recorder.stop_recording()
+        logger.info("Web UI shutting down")
 
     return app
 

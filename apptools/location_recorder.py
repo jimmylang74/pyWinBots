@@ -1,428 +1,179 @@
-import ctypes
-import os
+"""Location Recorder — launch mouse_overlay.exe, capture first click, save coords."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import subprocess
 import sys
-import threading
-import time
-from typing import Callable, Optional
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
 
-logger = __import__('base.debug').get_logger()
+logger = __import__("base.debug").get_logger()
 
-_MOUSE_HOOK_DLL = None
-
-if sys.platform == "win32":
-    _dll_path = os.path.join(os.path.dirname(__file__), "mouse_hook.dll")
-    if os.path.exists(_dll_path):
-        _MOUSE_HOOK_DLL = ctypes.WinDLL(_dll_path)
-    else:
-        logger.warning("[LR] mouse_hook.dll not found at %s, falling back to pure Python", _dll_path)
+_MOUSE_OVERLAY_EXE = (
+    Path(__file__).resolve().parent.parent / "mouse_overlay" / "mouse_overlay.exe"
+)
 
 
-class LocationRecorder:
-    def __init__(self, auto_start_name: str = ""):
-        self._hook_id = None
-        self._thread: Optional[threading.Thread] = None
-        self._running = False
-        self._status_callback: Optional[Callable[[str], None]] = None
-        self._last_mouse_x: int = 0
-        self._last_mouse_y: int = 0
-        self._overlay_hwnd = None
-        self._overlay_rect = None
-        self._overlay_wndproc = None
-        self._overlay_brush = None
-        self._overlay_user32 = None
-        self._overlay_gdi32 = None
-        if auto_start_name:
-            logger.info("[LR] Auto-starting with name='%s'", auto_start_name)
-            self.start_recording(auto_start_name, None, None)
+@dataclass
+class ClickResult:
+    handle: str
+    title: str
+    rel_x: int
+    rel_y: int
+    abs_x: int
+    abs_y: int
+    rect_left: int
+    rect_top: int
+    rect_right: int
+    rect_bottom: int
 
-    def start_recording(self, name: str, result_cb, status_cb):
-        if self._running:
-            return False
-        self._status_callback = status_cb
-        self._running = True
 
-        if sys.platform != "win32":
-            logger.error("Location recording is only supported on Windows")
-            return False
+def _parse_click_json(data: dict) -> Optional[ClickResult]:
+    try:
+        rect = data["rect"]
+        mouse = data["mouse"]
+    except (KeyError, TypeError):
+        return None
 
-        self._thread = threading.Thread(target=self._run_hook_thread, daemon=True)
-        self._thread.start()
-        return True
+    left = int(rect["left"])
+    top = int(rect["top"])
+    abs_x = int(mouse["x"])
+    abs_y = int(mouse["y"])
 
-    def is_running(self):
-        return self._running
+    return ClickResult(
+        handle=str(data.get("handle", "")),
+        title=str(data.get("title", "")),
+        rel_x=abs_x - left,
+        rel_y=abs_y - top,
+        abs_x=abs_x,
+        abs_y=abs_y,
+        rect_left=left,
+        rect_top=top,
+        rect_right=int(rect["right"]),
+        rect_bottom=int(rect["bottom"]),
+    )
 
-    def _run_hook_thread(self):
-        if sys.platform != "win32":
-            logger.error("Location recording is only supported on Windows")
-            return
 
-        if _MOUSE_HOOK_DLL is not None:
-            self._run_c_hook()
-        else:
-            self._run_python_hook()
+def _save_to_config(config_path: str, loc_name: str, x: int, y: int) -> None:
+    path = Path(config_path)
+    if not path.exists():
+        logger.error("[LR] Config file not found: %s", config_path)
+        return
 
-        self._cleanup()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.error("[LR] Failed to read config %s: %s", config_path, exc)
+        return
 
-    def _create_overlay(self, user32):
-        gdi32 = ctypes.WinDLL('gdi32')
-        self._overlay_user32 = user32
-        self._overlay_gdi32 = gdi32
+    if "locations" not in data:
+        data["locations"] = {}
 
-        COLORKEY = 0x010101
-        WNDPROC_TYPE = ctypes.WINFUNCTYPE(
-            ctypes.c_ssize_t,
-            ctypes.wintypes.HWND,
-            ctypes.c_uint,
-            ctypes.c_ssize_t,
-            ctypes.c_ssize_t,
+    data["locations"][loc_name] = [x, y]
+
+    try:
+        path.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
         )
-
-        class WNDCLASSW(ctypes.Structure):
-            _fields_ = [
-                ("style", ctypes.c_uint),
-                ("lpfnWndProc", ctypes.c_void_p),
-                ("cbClsExtra", ctypes.c_int),
-                ("cbWndExtra", ctypes.c_int),
-                ("hInstance", ctypes.wintypes.HINSTANCE),
-                ("hIcon", ctypes.wintypes.HANDLE),
-                ("hCursor", ctypes.wintypes.HANDLE),
-                ("hbrBackground", ctypes.wintypes.HANDLE),
-                ("lpszMenuName", ctypes.c_wchar_p),
-                ("lpszClassName", ctypes.c_wchar_p),
-            ]
-
-        class PAINTSTRUCT(ctypes.Structure):
-            _fields_ = [
-                ("hdc", ctypes.wintypes.HDC),
-                ("fErase", ctypes.c_int),
-                ("rcPaint", ctypes.wintypes.RECT),
-                ("fRestore", ctypes.c_int),
-                ("fIncUpdate", ctypes.c_int),
-                ("rgbReserved", ctypes.c_byte * 32),
-            ]
-
-        u32 = user32
-        g32 = gdi32
-
-        u32.DefWindowProcW.argtypes = [
-            ctypes.wintypes.HWND,
-            ctypes.c_uint,
-            ctypes.c_ssize_t,
-            ctypes.c_ssize_t,
-        ]
-        u32.DefWindowProcW.restype = ctypes.c_ssize_t
-
-        def _wndproc(hwnd, msg, wParam, lParam):
-            if msg == 0x000F:
-                rect = self._overlay_rect
-                ps = PAINTSTRUCT()
-                hdc = u32.BeginPaint(hwnd, ctypes.byref(ps))
-                if rect is not None:
-                    hpen = g32.CreatePen(0, 5, 0x0000FF)
-                    old_pen = g32.SelectObject(hdc, hpen)
-                    old_brush = g32.SelectObject(hdc, g32.GetStockObject(5))
-                    g32.Rectangle(hdc, rect[0], rect[1], rect[2], rect[3])
-                    g32.SelectObject(hdc, old_pen)
-                    g32.SelectObject(hdc, old_brush)
-                    g32.DeleteObject(hpen)
-                u32.EndPaint(hwnd, ctypes.byref(ps))
-                return 0
-            return u32.DefWindowProcW(hwnd, msg, wParam, lParam)
-
-        self._overlay_wndproc = WNDPROC_TYPE(_wndproc)
-
-        hInstance = ctypes.windll.kernel32.GetModuleHandleW(None)
-
-        wc = WNDCLASSW()
-        wc.style = 0x0002 | 0x0001
-        wc.lpfnWndProc = ctypes.cast(self._overlay_wndproc, ctypes.c_void_p).value
-        wc.hInstance = hInstance
-        wc.lpszClassName = "PyWinBotsOverlay"
-        wc.hbrBackground = gdi32.CreateSolidBrush(COLORKEY)
-        self._overlay_brush = wc.hbrBackground
-
-        atom = user32.RegisterClassW(ctypes.byref(wc))
-        if not atom:
-            logger.error("[LR] Overlay RegisterClassW failed: %d", ctypes.get_last_error())
-            return False
-
-        sx = user32.GetSystemMetrics(76)
-        sy = user32.GetSystemMetrics(77)
-        scx = user32.GetSystemMetrics(78)
-        scy = user32.GetSystemMetrics(79)
-
-        ex_style = 0x00000008 | 0x00080000 | 0x00000020 | 0x00000080 | 0x08000000
-        hwnd = user32.CreateWindowExW(
-            ex_style,
-            "PyWinBotsOverlay",
-            None,
-            0x80000000,
-            sx, sy, scx, scy,
-            None, None, hInstance, None,
+        logger.info(
+            "[LR] Saved location '%s' = [%d, %d] → %s", loc_name, x, y, config_path
         )
+    except Exception as exc:
+        logger.error("[LR] Failed to write config %s: %s", config_path, exc)
 
-        if not hwnd:
-            logger.error("[LR] Overlay CreateWindowExW failed: %d", ctypes.get_last_error())
-            user32.UnregisterClassW("PyWinBotsOverlay", hInstance)
-            return False
 
-        user32.SetLayeredWindowAttributes(hwnd, COLORKEY, 0, 0x00000001)
-        user32.ShowWindow(hwnd, 5)
-        user32.UpdateWindow(hwnd)
+async def record_click(
+    config_path: str,
+    loc_name: str,
+    timeout: float = 0,
+) -> Optional[ClickResult]:
+    if sys.platform != "win32":
+        logger.error("[LR] Location recording is only supported on Windows")
+        return None
 
-        self._overlay_hwnd = hwnd
-        logger.info("[LR] Overlay created hwnd=0x%X (%dx%d)", hwnd, scx, scy)
-        return True
+    if not _MOUSE_OVERLAY_EXE.exists():
+        logger.error("[LR] mouse_overlay.exe not found at %s", _MOUSE_OVERLAY_EXE)
+        return None
 
-    def _destroy_overlay(self):
-        if not self._overlay_hwnd:
-            return
-        user32 = self._overlay_user32
-        if user32:
-            user32.ShowWindow(self._overlay_hwnd, 0)
-            user32.DestroyWindow(self._overlay_hwnd)
-            hInstance = ctypes.windll.kernel32.GetModuleHandleW(None)
-            user32.UnregisterClassW("PyWinBotsOverlay", hInstance)
-        if self._overlay_brush and self._overlay_gdi32:
-            self._overlay_gdi32.DeleteObject(self._overlay_brush)
-        self._overlay_hwnd = None
-        self._overlay_rect = None
-        self._overlay_wndproc = None
-        self._overlay_brush = None
-        self._overlay_user32 = None
-        self._overlay_gdi32 = None
-        logger.info("[LR] Overlay destroyed")
+    logger.info("[LR] Starting mouse_overlay.exe (config=%s, loc=%s)", config_path, loc_name)
 
-    def _run_c_hook(self):
-        dll = _MOUSE_HOOK_DLL
-        user32 = ctypes.WinDLL('user32')
+    startupinfo = None
+    creationflags = 0
+    if sys.platform == "win32":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0
+        creationflags = subprocess.CREATE_NO_WINDOW
 
-        WM_MOUSEMOVE = 0x0200
+    proc = await asyncio.create_subprocess_exec(
+        str(_MOUSE_OVERLAY_EXE),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        startupinfo=startupinfo,
+        creationflags=creationflags,
+    )
 
-        CB_FUNC = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)
+    logger.info("[LR] mouse_overlay.exe started (pid=%d)", proc.pid)
 
-        def _hook_cb(nCode, wParam, lParam):
-            if nCode >= 0 and wParam == WM_MOUSEMOVE:
-                self._last_mouse_x = ctypes.c_int.from_address(lParam).value
-                self._last_mouse_y = ctypes.c_int.from_address(lParam + 4).value
-            return dll.CallNext(self._hook_id, nCode, wParam, lParam)
+    try:
+        return await _read_click(proc, config_path, loc_name, timeout)
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+            logger.debug("[LR] mouse_overlay.exe terminated")
 
-        self._c_cb = CB_FUNC(_hook_cb)
 
-        dll.InstallHook.restype = ctypes.c_void_p
-        dll.InstallHook.argtypes = [ctypes.c_void_p]
-        dll.CallNext.restype = ctypes.c_long
-        dll.CallNext.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p]
+async def _read_click(
+    proc: asyncio.subprocess.Process,
+    config_path: str,
+    loc_name: str,
+    timeout: float,
+) -> Optional[ClickResult]:
+    assert proc.stdout is not None
 
-        self._hook_id = dll.InstallHook(self._c_cb)
-        if not self._hook_id:
-            logger.error("[LR] C hook InstallHook returned NULL")
-            return
+    async def _read_loop() -> Optional[ClickResult]:
+        while True:
+            line = await proc.stdout.readline()  # type: ignore[union-attr]
+            if not line:
+                logger.warning("[LR] mouse_overlay.exe stdout closed")
+                return None
 
-        logger.info("[LR] C hook installed, recording started")
-        if self._status_callback:
-            self._status_callback("recording")
+            text = line.decode("utf-8", errors="replace").strip()
+            if not text:
+                continue
 
-        try:
-            self._create_overlay(user32)
-        except Exception as exc:
-            logger.warning("[LR] Overlay creation failed: %s", exc)
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                logger.debug("[LR] mouse_overlay stdout (non-JSON): %s", text)
+                continue
 
-        self._poll_thread = threading.Thread(target=self._poll_window_info, args=(user32,), daemon=True)
-        self._poll_thread.start()
+            click_result = _parse_click_json(data)
+            if click_result is None:
+                logger.debug("[LR] mouse_overlay JSON (not click): %s", text)
+                continue
 
-        dll.RunMessagePump()
+            logger.info(
+                "[LR] Click captured: handle=%s title='%s' abs=(%d,%d) rel=(%d,%d)",
+                click_result.handle,
+                click_result.title,
+                click_result.abs_x,
+                click_result.abs_y,
+                click_result.rel_x,
+                click_result.rel_y,
+            )
 
-    def _poll_window_info(self, user32):
-        WindowFromPoint = user32.WindowFromPoint
-        WindowFromPoint.argtypes = [ctypes.wintypes.POINT]
-        WindowFromPoint.restype = ctypes.wintypes.HWND
+            _save_to_config(config_path, loc_name, click_result.rel_x, click_result.rel_y)
+            return click_result
 
-        GetAncestor = user32.GetAncestor
-        GetAncestor.argtypes = [ctypes.wintypes.HWND, ctypes.c_uint]
-        GetAncestor.restype = ctypes.wintypes.HWND
-
-        GetWindowRect = user32.GetWindowRect
-        GetWindowRect.argtypes = [ctypes.wintypes.HWND, ctypes.POINTER(ctypes.wintypes.RECT)]
-        GetWindowRect.restype = ctypes.c_bool
-
-        GetWindowTextW = user32.GetWindowTextW
-        GetWindowTextW.argtypes = [ctypes.wintypes.HWND, ctypes.c_wchar_p, ctypes.c_int]
-        GetWindowTextW.restype = ctypes.c_int
-
-        GetClassNameW = user32.GetClassNameW
-        GetClassNameW.argtypes = [ctypes.wintypes.HWND, ctypes.c_wchar_p, ctypes.c_int]
-        GetClassNameW.restype = ctypes.c_int
-
-        EnumWindows = user32.EnumWindows
-        IsWindowVisible = user32.IsWindowVisible
-        InvalidateRect = user32.InvalidateRect
-        InvalidateRect.argtypes = [ctypes.wintypes.HWND, ctypes.POINTER(ctypes.wintypes.RECT), ctypes.c_bool]
-        InvalidateRect.restype = ctypes.c_bool
-        UpdateWindow = user32.UpdateWindow
-        UpdateWindow.argtypes = [ctypes.wintypes.HWND]
-        UpdateWindow.restype = ctypes.c_bool
-
-        GA_ROOT = 1
-        ENUMPROC = ctypes.WINFUNCTYPE(
-            ctypes.c_bool,
-            ctypes.wintypes.HWND,
-            ctypes.wintypes.LPARAM,
-        )
-        last_move_time = time.monotonic()
-        last_x = last_y = 0
-        idle_logged = True
-        skip_titles = {"Program Manager"}
-
-        def _is_skippable(hwnd, title):
-            if not title or title in skip_titles:
-                return True
-            if self._overlay_hwnd and hwnd == self._overlay_hwnd:
-                return True
-            return False
-
-        def _find_titled_window_at(x_coord, y_coord):
-            found = [None]
-
-            def _cb(hwnd, _lparam):
-                if not IsWindowVisible(hwnd):
-                    return True
-                b = ctypes.create_unicode_buffer(256)
-                GetWindowTextW(hwnd, b, 256)
-                if _is_skippable(hwnd, b.value):
-                    return True
-                r = ctypes.wintypes.RECT()
-                if not GetWindowRect(hwnd, ctypes.byref(r)):
-                    return True
-                if r.left <= x_coord <= r.right and r.top <= y_coord <= r.bottom:
-                    found[0] = hwnd
-                    return False
-                return True
-
-            cb = ENUMPROC(_cb)
-            EnumWindows(cb, 0)
-            return found[0]
-
-        while self._running:
-            now = time.monotonic()
-            x, y = self._last_mouse_x, self._last_mouse_y
-
-            if x != last_x or y != last_y:
-                last_move_time = now
-                last_x, last_y = x, y
-                idle_logged = False
-                try:
-                    if self._overlay_hwnd and self._overlay_rect is not None:
-                        self._overlay_rect = None
-                        InvalidateRect(self._overlay_hwnd, None, True)
-                        UpdateWindow(self._overlay_hwnd)
-                except Exception as exc:
-                    logger.debug("[LR] overlay clear failed: %s", exc)
-            elif not idle_logged and (now - last_move_time) >= 1.0:
-                pt = ctypes.wintypes.POINT(x, y)
-                hwnd = WindowFromPoint(pt)
-                if hwnd:
-                    hwnd = GetAncestor(hwnd, GA_ROOT)
-
-                # WindowFromPoint may hit DWM ghost windows (#32769) or other
-                # system overlays that have no title. When that happens,
-                # enumerate visible top-level windows and find the first one
-                # with a title that actually contains the cursor point.
-                if hwnd:
-                    buf = ctypes.create_unicode_buffer(256)
-                    GetWindowTextW(hwnd, buf, 256)
-                    if _is_skippable(hwnd, buf.value):
-                        cls_buf = ctypes.create_unicode_buffer(256)
-                        GetClassNameW(hwnd, cls_buf, 256)
-                        logger.debug(
-                            "[LR] HWND 0x%X title='%s' class='%s' skipped, "
-                            "scanning visible windows at (%d,%d)",
-                            hwnd, buf.value, cls_buf.value, x, y,
-                        )
-                        hwnd = _find_titled_window_at(x, y)
-
-                if hwnd:
-                    rect = ctypes.wintypes.RECT()
-                    GetWindowRect(hwnd, ctypes.byref(rect))
-                    buf = ctypes.create_unicode_buffer(256)
-                    GetWindowTextW(hwnd, buf, 256)
-                    logger.info(
-                        "[LR] Idle window: hwnd=0x%X name='%s' rect=(%d,%d,%d,%d)",
-                        hwnd, buf.value, rect.left, rect.top, rect.right, rect.bottom
-                    )
-                    try:
-                        self._overlay_rect = (rect.left, rect.top, rect.right, rect.bottom)
-                        if self._overlay_hwnd:
-                            InvalidateRect(self._overlay_hwnd, None, False)
-                            UpdateWindow(self._overlay_hwnd)
-                    except Exception as exc:
-                        logger.debug("[LR] overlay update failed: %s", exc)
-                idle_logged = True
-
-            time.sleep(0.2)
-
-    def _run_python_hook(self):
-        import ctypes as _ct
-
-        WH_MOUSE_LL = 14
-        WM_MOUSEMOVE = 0x0200
-        wt = _ct.wintypes
-        user32_raw = _ct.WinDLL('user32')
-
-        def _cb(nCode, wParam, lParam):
-            if nCode >= 0 and wParam == WM_MOUSEMOVE:
-                self._last_mouse_x = _ct.c_int.from_address(lParam).value
-                self._last_mouse_y = _ct.c_int.from_address(lParam + 4).value
-            return user32_raw.CallNextHookEx(self._hook_id, nCode, wParam, _ct.c_void_p(lParam))
-
-        CB = _ct.WINFUNCTYPE(_ct.c_int, _ct.c_int, wt.WPARAM, wt.LPARAM)
-        self._c_cb = CB(_cb)
-        self._hook_id = user32_raw.SetWindowsHookExW(WH_MOUSE_LL, self._c_cb, None, 0)
-        if not self._hook_id:
-            logger.error("[LR] SetWindowsHookExW returned NULL")
-            return
-
-        logger.info("[LR] Python hook installed (slower than C version)")
-        if self._status_callback:
-            self._status_callback("recording")
-
-        try:
-            self._create_overlay(user32_raw)
-        except Exception as exc:
-            logger.warning("[LR] Overlay creation failed: %s", exc)
-
-        self._poll_thread = threading.Thread(target=self._poll_window_info, args=(user32_raw,), daemon=True)
-        self._poll_thread.start()
-
-        try:
-            msg = wt.MSG()
-            while self._running:
-                user32_raw.MsgWaitForMultipleObjects(0, None, False, 200, 0)
-                while user32_raw.PeekMessageW(_ct.byref(msg), None, 0, 0, 1):
-                    user32_raw.TranslateMessage(_ct.byref(msg))
-                    user32_raw.DispatchMessageW(_ct.byref(msg))
-        except Exception as e:
-            logger.error("[LR] message pump error: %s", e, exc_info=True)
-
-    def _cleanup(self):
-        self._destroy_overlay()
-        if _MOUSE_HOOK_DLL and self._hook_id:
-            _MOUSE_HOOK_DLL.UninstallHook()
-        elif self._hook_id:
-            import ctypes as _ct
-            user32_raw = _ct.WinDLL('user32')
-            user32_raw.UnhookWindowsHookEx(self._hook_id)
-        self._hook_id = None
-        self._running = False
-        if self._status_callback:
-            self._status_callback("stopped")
-
-    def stop_recording(self):
-        if not self._running:
-            return
-        self._running = False
-        if _MOUSE_HOOK_DLL:
-            _MOUSE_HOOK_DLL.StopMessagePump()
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=3)
+    try:
+        if timeout > 0:
+            return await asyncio.wait_for(_read_loop(), timeout=timeout)
+        return await _read_loop()
+    except asyncio.TimeoutError:
+        logger.warning("[LR] Timeout waiting for click (%.0fs)", timeout)
+        return None

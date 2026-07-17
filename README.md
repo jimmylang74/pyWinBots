@@ -165,6 +165,31 @@ Short version:
                                         └───────────────────────┘
 ```
 
+## Locations
+
+Each plugin's `manifest.json` can include a `locations` record that maps
+named UI element offsets (relative to the main window top-left) to `[x, y]`
+pixel coordinates. Plugins read these at startup to locate buttons, inputs,
+and other controls.
+
+```json
+{
+  "locations": {
+    "searchbox_offset": [320, 100],
+    "messageinput_offset": [810, 1376],
+    "custom_button": [100, 500]
+  }
+}
+```
+
+| Key | Value | Description |
+|-----|-------|-------------|
+| Any name | `[x, y]` | Pixel offset from the app's main window top-left corner |
+
+Plugins access these via `manifest["locations"]["<key>"]` during
+`initialize()`. You can add or change entries through the Web UI config
+editor — no code changes required.
+
 ## Logging
 
 - **Dual output**: console (stdout) + file

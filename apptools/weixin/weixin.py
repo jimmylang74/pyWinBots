@@ -140,10 +140,11 @@ class WeixinTool(AppTool):
 
     async def initialize(self) -> bool:
         self._manifest_data = self._load_manifest()
-        self._searchbox_offset = self._manifest_data.get(
+        locations = self._manifest_data.get("locations", {})
+        self._searchbox_offset = locations.get(
             "searchbox_offset", self._searchbox_offset
         )
-        self._messageinput_offset = self._manifest_data.get(
+        self._messageinput_offset = locations.get(
             "messageinput_offset", self._messageinput_offset
         )
         logger.info("Weixin plugin initialized")

@@ -8,14 +8,6 @@
   "app_args": "--scene=taskbarpins",
   "min_sdk_version": "1.0.0",
   "backend": "uia",
-  "searchbox_offset": [
-    320,
-    100
-  ],
-  "messageinput_offset": [
-    600,
-    1500
-  ],
   "capabilities": [
     "weixin_launch",
     "weixin_search_contact",

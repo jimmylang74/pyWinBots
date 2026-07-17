@@ -1,0 +1,3 @@
+[submodule "mouse_overlay"]
+	path = mouse_overlay
+	url = https://github.com/jimmylang74/mouse_overlay.git

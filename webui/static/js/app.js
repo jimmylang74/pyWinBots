@@ -184,6 +184,7 @@ async function startLocRecording() {
     btnStart.style.display = 'none';
     btnClose.style.display = '';
     btnClose.focus();
+    window.focus();
     toast(`Location "${locName}" 已保存`);
   } catch (e) {
     document.getElementById('locStatus').textContent = `错误: ${e.message}`;

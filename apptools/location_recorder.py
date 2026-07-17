@@ -85,6 +85,45 @@ def _save_to_config(config_path: str, loc_name: str, x: int, y: int) -> None:
         logger.error("[LR] Failed to write config %s: %s", config_path, exc)
 
 
+def _get_foreground_hwnd() -> Optional[int]:
+    try:
+        import ctypes
+
+        hwnd = ctypes.windll.user32.GetForegroundWindow()
+        if hwnd:
+            return hwnd
+    except Exception as exc:
+        logger.debug("[LR] GetForegroundWindow failed: %s", exc)
+    return None
+
+
+def _restore_foreground(hwnd: Optional[int]) -> None:
+    if hwnd is None:
+        return
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+
+        fg_hwnd = user32.GetForegroundWindow()
+        fg_tid = user32.GetWindowThreadProcessId(fg_hwnd, None)
+        my_tid = kernel32.GetCurrentThreadId()
+
+        user32.AttachThreadInput(my_tid, fg_tid, True)
+        user32.SetForegroundWindow(hwnd)
+        user32.BringWindowToTop(hwnd)
+        user32.SetFocus(hwnd)
+        user32.AttachThreadInput(my_tid, fg_tid, False)
+
+        logger.debug("[LR] Restored foreground window handle=%s", hwnd)
+    except Exception as exc:
+        logger.debug("[LR] Restore foreground failed: %s", exc)
+
+
 async def record_click(
     config_path: str,
     loc_name: str,
@@ -98,7 +137,12 @@ async def record_click(
         logger.error("[LR] mouse_overlay.exe not found at %s", _MOUSE_OVERLAY_EXE)
         return None
 
-    logger.info("[LR] Starting mouse_overlay.exe (config=%s, loc=%s)", config_path, loc_name)
+    # Capture the foreground window (browser) before overlay takes focus
+    prev_hwnd = _get_foreground_hwnd()
+    logger.info(
+        "[LR] Starting mouse_overlay.exe (config=%s, loc=%s, prev_hwnd=%s)",
+        config_path, loc_name, prev_hwnd,
+    )
 
     startupinfo = None
     creationflags = 0
@@ -119,12 +163,14 @@ async def record_click(
     logger.info("[LR] mouse_overlay.exe started (pid=%d)", proc.pid)
 
     try:
-        return await _read_click(proc, config_path, loc_name, timeout)
+        result = await _read_click(proc, config_path, loc_name, timeout)
+        return result
     finally:
         if proc.returncode is None:
             proc.kill()
             await proc.wait()
             logger.debug("[LR] mouse_overlay.exe terminated")
+        _restore_foreground(prev_hwnd)
 
 
 async def _read_click(

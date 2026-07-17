@@ -59,12 +59,16 @@
   },
   "locations": {
     "messageinput_offset": [
-      1048,
-      1235
+      810,
+      1376
     ],
-    "click_offset": [
-      837,
-      1415
+    "searchbox_offset": [
+      320,
+      100
+    ],
+    "test_location": [
+      720,
+      1010
     ]
   }
 }

@@ -102,6 +102,7 @@ async function openLocationModal(pluginName) {
   const btnClose = document.getElementById('btnCloseLoc');
   btnStart.style.display = '';
   btnStart.disabled = false;
+  btnStart.textContent = 'Start Record';
   btnClose.style.display = 'none';
 
   const select = document.getElementById('locNameSelect');

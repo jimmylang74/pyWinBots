@@ -194,6 +194,21 @@ class AppManager:
                 logger.error("collect_tools failed for %s: %s", name, exc)
         return all_tools
 
+    def collect_all_prompts(self) -> dict[str, tuple[str, str]]:
+        """Return a flat dict of {prompt_name: (content, description)} for every
+        enabled plugin."""
+        all_prompts: dict[str, tuple[str, str]] = {}
+        for name, plugin in self._plugins.items():
+            if not plugin.enabled:
+                continue
+            try:
+                prompts = plugin.get_prompt_definitions()
+                all_prompts.update(prompts)
+                logger.debug("  %s: %d prompts", name, len(prompts))
+            except Exception as exc:
+                logger.error("collect_prompts failed for %s: %s", name, exc)
+        return all_prompts
+
     def get_plugin_info(self, name: str) -> dict[str, Any] | None:
         """Return a summary dict for a single plugin."""
         plugin = self._plugins.get(name)

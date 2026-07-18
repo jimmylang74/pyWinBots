@@ -19,6 +19,7 @@ from __future__ import annotations
 import inspect
 import logging
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any, Callable, get_args, get_origin, get_type_hints, Optional
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,10 @@ _PYTHON_TO_JSON_SCHEMA_TYPE = {
 # Type alias for tool registration.
 # {tool_name: (callable, metadata_dictionary)}
 ToolMap = dict[str, tuple[Callable[..., Any], dict[str, Any]]]
+
+# Type alias for prompt registration.
+# {prompt_name: (content_string, description_string)}
+PromptMap = dict[str, tuple[str, str]]
 
 
 class AppTool(ABC):
@@ -201,6 +206,58 @@ class AppTool(ABC):
                 }
 
             definitions[tool_name] = (method, metadata)
+
+        return definitions
+
+    # ------------------------------------------------------------------
+    # Prompts
+    # ------------------------------------------------------------------
+
+    def get_prompt_definitions(self) -> PromptMap:
+        """Build MCP prompt definitions from manifest.json ``prompts`` section.
+
+        Each entry in ``manifest["prompts"]`` is keyed by the prompt name:
+
+        .. code-block:: json
+
+            {
+              "my_prompt": {
+                "file": "prompt.md",
+                "description": "What this prompt does"
+              }
+            }
+
+        ``file`` defaults to ``prompt.md`` in the plugin directory.
+        Subclasses may override for custom behaviour.
+        """
+        manifest = self.manifest
+        prompts_cfg: dict[str, Any] = manifest.get("prompts", {})
+        if not prompts_cfg:
+            return {}
+
+        plugin_dir = Path(__file__).parent / self.name
+        definitions: PromptMap = {}
+
+        for prompt_name, prompt_cfg in prompts_cfg.items():
+            filename = prompt_cfg.get("file", "prompt.md")
+            prompt_file = plugin_dir / filename
+
+            if not prompt_file.exists():
+                logger.error(
+                    "Prompt %r file not found: %s",
+                    prompt_name, prompt_file,
+                )
+                continue
+
+            try:
+                content = prompt_file.read_text(encoding="utf-8")
+                description = prompt_cfg.get("description", f"Prompt for {prompt_name}")
+                definitions[prompt_name] = (content, description)
+            except Exception as exc:
+                logger.error(
+                    "Failed to read prompt %r from %s: %s",
+                    prompt_name, prompt_file, exc,
+                )
 
         return definitions
 

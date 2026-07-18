@@ -61,9 +61,16 @@ class PyWinBotsServer:
         all_tools = self.app_manager.collect_all_tools()
         self._register_tools(all_tools)
 
+        all_prompts = self.app_manager.collect_all_prompts()
+        self._register_prompts(all_prompts)
+
         self._setup_done = True
-        tool_names = ", ".join(all_tools.keys())
-        logger.info("MCP server ready – %d tools registered: %s", len(all_tools), tool_names)
+        tool_lines = "\n".join(f"      - {name}" for name in all_tools.keys())
+        prompt_lines = "\n".join(f"      - {name}" for name in all_prompts.keys())
+        logger.info("[MCP-SERVER] Server ready – %d tools, %d prompts registered:\n"
+                     "    tools:\n%s\n"
+                     "    prompts:\n%s",
+                     len(all_tools), len(all_prompts), tool_lines, prompt_lines)
 
     # ------------------------------------------------------------------
     # Tool registration
@@ -93,8 +100,42 @@ class PyWinBotsServer:
 
                 registered += 1
             except Exception as exc:
-                logger.error("Failed to register tool '%s': %s", tool_name, exc)
-        logger.info("Registered %d tools from plugins", registered)
+                logger.error("[Plugin] Failed to register tool '%s': %s", tool_name, exc)
+        logger.info("[Plugin] Registered %d tools from plugins", registered)
+
+    # ------------------------------------------------------------------
+    # Prompt registration
+    # ------------------------------------------------------------------
+
+    def _register_prompts(self, prompts: dict[str, tuple[str, str]]) -> None:
+        """Register prompt definitions with the FastMCP server.
+
+        Args:
+            prompts: Mapping of ``{prompt_name: (content, description)}``.
+        """
+        from mcp.server.fastmcp.prompts.base import Prompt as FastMCPPrompt
+
+        registered = 0
+        for prompt_name, (content, description) in prompts.items():
+            try:
+                def _make_prompt_fn(text: str):  # noqa: ANN001, ANN202
+                    def _fn() -> str:
+                        return text
+                    return _fn
+
+                prompt = FastMCPPrompt.from_function(
+                    fn=_make_prompt_fn(content),
+                    name=prompt_name,
+                    description=description,
+                )
+
+                self.mcp.add_prompt(prompt)
+                registered += 1
+                logger.info("[Plugin] Loaded prompt: %s (%d chars)", prompt_name, len(content))
+            except Exception as exc:
+                logger.error("[Plugin] Failed to register prompt '%s': %s", prompt_name, exc)
+
+        logger.info("[Plugin] Registered %d prompts from plugins", registered)
 
     # ------------------------------------------------------------------
     # Run
@@ -163,3 +204,18 @@ class PyWinBotsServer:
                     raise
 
             mcp_server.request_handlers[types.CallToolRequest] = debug_call_tool_handler
+
+        original_list_prompts = mcp_server.request_handlers.get(types.ListPromptsRequest)
+        if original_list_prompts is not None:
+            async def debug_list_prompts_handler(req):
+                try:
+                    result = await original_list_prompts(req)
+                    prompts = result.root.prompts
+                    logger.info("[MCP] >>> Responding with %d prompts: %s",
+                                len(prompts), ", ".join(p.name for p in prompts))
+                    return result
+                except Exception as exc:
+                    logger.error("[MCP] ListPrompts EXCEPTION: %s", exc, exc_info=True)
+                    raise
+
+            mcp_server.request_handlers[types.ListPromptsRequest] = debug_list_prompts_handler

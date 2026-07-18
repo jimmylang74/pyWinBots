@@ -25,6 +25,12 @@
       ]
     }
   },
+  "prompts": {
+    "weixin_prompt": {
+      "file": "prompt.md",
+      "description": "微信自动化插件使用指南"
+    }
+  },
   "locations": {
     "messageinput_offset": [
       810,

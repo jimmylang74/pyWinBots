@@ -5,6 +5,7 @@ designed for Windows automation runtime diagnostics.
 """
 
 import logging
+import os
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -27,6 +28,18 @@ def _get_default_log_dir() -> Path:
         _default_log_dir = Path.home() / ".pywinbots" / "logs"
         _default_log_dir.mkdir(parents=True, exist_ok=True)
     return _default_log_dir
+
+
+_RED = "\033[91m"
+_RESET = "\033[0m"
+
+
+class _ColorFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        msg = super().format(record)
+        if "[MCP]" in msg:
+            return f"{_RED}{msg}{_RESET}"
+        return msg
 
 
 def setup_logger(
@@ -66,7 +79,13 @@ def setup_logger(
     if console:
         ch = logging.StreamHandler(sys.stdout)
         ch.setLevel(level)
-        ch.setFormatter(formatter)
+        if os.isatty(sys.stdout.fileno()):
+            ch.setFormatter(_ColorFormatter(
+                "%(asctime)s.%(msecs)03d [%(levelname)-7s] %(name)s: %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            ))
+        else:
+            ch.setFormatter(formatter)
         logger.addHandler(ch)
 
     # File handler

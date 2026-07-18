@@ -124,19 +124,31 @@ class PyWinBotsServer:
 
         from mcp import types
 
-        original_handler = mcp_server.request_handlers.get(types.ListToolsRequest)
-        if original_handler is None:
-            return
+        original_list_tools = mcp_server.request_handlers.get(types.ListToolsRequest)
+        if original_list_tools is not None:
+            async def debug_list_tools_handler(req):
+                try:
+                    result = await original_list_tools(req)
+                    tools = result.root.tools
+                    logger.info("[MCP] >>> Responding with %d tools: %s",
+                                len(tools), ", ".join(t.name for t in tools))
+                    return result
+                except Exception as exc:
+                    logger.error("[MCP] ListTools EXCEPTION: %s", exc, exc_info=True)
+                    raise
 
-        async def debug_list_tools_handler(req):
-            try:
-                result = await original_handler(req)
-                tools = result.root.tools
-                logger.info("[MCP] >>> Responding with %d tools: %s",
-                            len(tools), ", ".join(t.name for t in tools))
-                return result
-            except Exception as exc:
-                logger.error("[MCP] ListTools EXCEPTION: %s", exc, exc_info=True)
-                raise
+            mcp_server.request_handlers[types.ListToolsRequest] = debug_list_tools_handler
 
-        mcp_server.request_handlers[types.ListToolsRequest] = debug_list_tools_handler
+        original_call_tool = mcp_server.request_handlers.get(types.CallToolRequest)
+        if original_call_tool is not None:
+            async def debug_call_tool_handler(req):
+                tool_name = req.params.name
+                try:
+                    logger.info("[MCP] >>> CallTool: %s", tool_name)
+                    result = await original_call_tool(req)
+                    return result
+                except Exception as exc:
+                    logger.error("[MCP] CallTool '%s' EXCEPTION: %s", tool_name, exc, exc_info=True)
+                    raise
+
+            mcp_server.request_handlers[types.CallToolRequest] = debug_call_tool_handler

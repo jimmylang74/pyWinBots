@@ -89,6 +89,7 @@ async def run_tests(
 
                 # List tools
                 tools_result = await session.list_tools()
+                available_tools = {t.name for t in tools_result.tools}
                 logger.info("\nAvailable tools on server (%d):", len(tools_result.tools))
                 for i, t in enumerate(tools_result.tools, 1):
                     params = getattr(t, "inputSchema", {}).get("properties", {})
@@ -107,6 +108,18 @@ async def run_tests(
                     params = test.get("params", {})
 
                     logger.info("[%s] %s", tid, desc)
+
+                    if tool not in available_tools:
+                        logger.warning("  Tool '%s' not found on MCP server, skipping", tool)
+                        results.append({
+                            "id": tid,
+                            "success": False,
+                            "tool": tool,
+                            "error": f"Tool '{tool}' not found on MCP server",
+                            "elapsed": 0,
+                        })
+                        continue
+
                     start = time.time()
                     result = await call_tool(session, tool, params)
                     elapsed = time.time() - start

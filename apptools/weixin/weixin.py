@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from apptools.apptool import AppTool, ToolMap
+from apptools.apptool import AppTool
 from automation.app import AppOperations
 from automation.ui import UIOperations
 from automation.windows import WindowOperations
@@ -151,54 +151,10 @@ class WeixinTool(AppTool):
         return True
 
     # ------------------------------------------------------------------
-    # Tool definitions
-    # ------------------------------------------------------------------
-
-    def get_tool_definitions(self) -> ToolMap:
-        return {
-            "weixin_launch": (
-                self.launch_weixin,
-                {"description": "启动微信 Windows 客户端。如果微信已在运行则直接连接。"},
-            ),
-            "weixin_search_contact": (
-                self.search_contact,
-                {
-                    "description": "搜索微信联系人并打开聊天窗口。",
-                    "parameters": {
-                        "name": {
-                            "type": "string",
-                            "description": "联系人姓名或昵称",
-                        }
-                    },
-                },
-            ),
-            "weixin_send_message": (
-                self.send_message,
-                {
-                    "description": "向指定联系人发送文本消息。自动搜索联系人并进入聊天窗口。",
-                    "parameters": {
-                        "contact": {
-                            "type": "string",
-                            "description": "联系人姓名或昵称",
-                        },
-                        "message": {
-                            "type": "string",
-                            "description": "要发送的消息内容",
-                        },
-                    },
-                },
-            ),
-            "weixin_get_main_window": (
-                self.get_main_window_info,
-                {"description": "获取微信主窗口的位置、大小和标题信息。"},
-            ),
-        }
-
-    # ------------------------------------------------------------------
     # Tool implementations
     # ------------------------------------------------------------------
 
-    def launch_weixin(self) -> str:
+    def weixin_launch(self) -> str:
         """Launch WeChat or connect if already running."""
         # Try to connect first
         try:
@@ -223,7 +179,7 @@ class WeixinTool(AppTool):
             raise RuntimeError(f"启动失败: {app_path}")
 
         parent_pid = result.process
-        logger.debug("[launch_weixin DEBUG] Parent process: %d", parent_pid)
+        logger.debug("[weixin_launch DEBUG] Parent process: %d", parent_pid)
         _log_process_tree(parent_pid)
 
         title_pattern = "(?i)(wechat|微信)"
@@ -237,7 +193,7 @@ class WeixinTool(AppTool):
             try:
                 all_windows = desktop.windows()
                 logger.debug(
-                    "[launch_weixin DEBUG] t=%ds: %d desktop window(s):",
+                    "[weixin_launch DEBUG] t=%ds: %d desktop window(s):",
                     elapsed, len(all_windows),
                 )
                 for w in all_windows:
@@ -246,7 +202,7 @@ class WeixinTool(AppTool):
                     except Exception:
                         pass
             except Exception as exc:
-                logger.debug("[launch_weixin DEBUG] t=%ds: desktop enumerate failed: %s", elapsed, exc)
+                logger.debug("[weixin_launch DEBUG] t=%ds: desktop enumerate failed: %s", elapsed, exc)
                 all_windows = []
 
             for w in all_windows:
@@ -254,7 +210,7 @@ class WeixinTool(AppTool):
                     title = w.window_text()
                     if re.search(title_pattern, title):
                         win = w
-                        logger.debug("[launch_weixin DEBUG] Matched: title=%r", title)
+                        logger.debug("[weixin_launch DEBUG] Matched: title=%r", title)
                         break
                 except Exception:
                     continue
@@ -263,7 +219,7 @@ class WeixinTool(AppTool):
                 break
 
             logger.debug(
-                "[launch_weixin DEBUG] No match in %d window(s) – retrying",
+                "[weixin_launch DEBUG] No match in %d window(s) – retrying",
                 len(all_windows),
             )
             time.sleep(poll_interval)
@@ -287,7 +243,7 @@ class WeixinTool(AppTool):
         logger.warning("WeChat launched but main window not found after %ds", max_wait)
         raise RuntimeError("微信已启动，但未能检测到主窗口")
 
-    def search_contact(self, name: str) -> str:
+    def weixin_search_contact(self, name: str) -> str:
         if not self._ensure_ready():
             raise RuntimeError("微信未启动或主窗口不可用")
         if not _HAS_PYAUTOGUI:
@@ -298,52 +254,58 @@ class WeixinTool(AppTool):
             return f"{time.monotonic() - t0:.2f}s"
 
         try:
-            logger.info("[search_contact] step 1/5: set_focus ...")
+            logger.info("[weixin_search_contact] step 1/5: set_focus ...")
             self._main_window.set_focus()
             time.sleep(0.5)
             rect = self._main_window.rectangle()
-            logger.info("[search_contact] step 1/5 done (%s) - window rect=(%d,%d,%d,%d)",
+            logger.info("[weixin_search_contact] step 1/5 done (%s) - window rect=(%d,%d,%d,%d)",
                         elapsed(), rect.left, rect.top, rect.right, rect.bottom)
 
             search_x = rect.left + self._searchbox_offset[0]
             search_y = rect.top + self._searchbox_offset[1]
-            logger.info("[search_contact] step 2/5: click search box at (%d, %d) ...", search_x, search_y)
+            logger.info("[weixin_search_contact] step 2/5: click search box at (%d, %d) ...", search_x, search_y)
             pyautogui.click(search_x, search_y)
             time.sleep(0.5)
             pyautogui.hotkey("ctrl", "a")
             pyautogui.press("delete")
             time.sleep(0.2)
-            logger.info("[search_contact] step 2/5 done (%s)", elapsed())
+            logger.info("[weixin_search_contact] step 2/5 done (%s)", elapsed())
 
-            logger.info("[search_contact] step 3/5: type name %r ...", name)
+            logger.info("[weixin_search_contact] step 3/5: type name %r ...", name)
             _clipboard_paste(name)
             time.sleep(0.1)
             pyautogui.hotkey("ctrl", "v")
             time.sleep(2.0)
-            logger.info("[search_contact] step 3/5 done (%s)", elapsed())
+            logger.info("[weixin_search_contact] step 3/5 done (%s)", elapsed())
 
-            logger.info("[search_contact] step 4/5: press Enter ...")
+            logger.info("[weixin_search_contact] step 4/5: press Enter ...")
             pyautogui.press("enter")
             time.sleep(1.0)
-            logger.info("[search_contact] step 4/5 done (%s)", elapsed())
+            logger.info("[weixin_search_contact] step 4/5 done (%s)", elapsed())
 
-            logger.info("[search_contact] step 5/5: verify ...")
-            logger.info("[search_contact] DONE (%s) - 已点击联系人: %s", elapsed(), name)
+            logger.info("[weixin_search_contact] step 5/5: verify ...")
+            logger.info("[weixin_search_contact] DONE (%s) - 已点击联系人: %s", elapsed(), name)
             return f"已找到联系人: {name}"
 
         except Exception as exc:
-            logger.error("[search_contact] FAILED at (%s): %s", elapsed(), exc)
+            logger.error("[weixin_search_contact] FAILED at (%s): %s", elapsed(), exc)
             raise
 
-    def send_message(self, contact: str, message: str) -> str:
+    def weixin_send_message(self, contact: str, message: str) -> str:
         if not self._ensure_ready():
             raise RuntimeError("微信未启动或主窗口不可用")
         if not _HAS_PYAUTOGUI:
             raise RuntimeError("pyautogui 未安装，无法使用坐标定位")
 
+        t0 = time.monotonic()
+        def elapsed():
+            return f"{time.monotonic() - t0:.2f}s"
+
         try:
-            self.search_contact(contact)
+            logger.info("[weixin_send_message] step 1/4: search contact %r ...", contact)
+            self.weixin_search_contact(contact)
             time.sleep(1)
+            logger.info("[weixin_send_message] step 1/4 done (%s)", elapsed())
 
             self._main_window.set_focus()
             time.sleep(0.5)
@@ -351,24 +313,31 @@ class WeixinTool(AppTool):
 
             input_x = rect.left + self._messageinput_offset[0]
             input_y = rect.top + self._messageinput_offset[1]
-            logger.info("[send_message] click input box at (%d, %d)", input_x, input_y)
+            logger.info("[weixin_send_message] step 2/4: click input box at (%d, %d) ...", input_x, input_y)
             pyautogui.click(input_x, input_y)
             time.sleep(0.3)
+            logger.info("[weixin_send_message] step 2/4 done (%s)", elapsed())
 
+            logger.info("[weixin_send_message] step 3/4: paste message (%d chars) ...", len(message))
             _clipboard_paste(message)
             time.sleep(0.1)
             pyautogui.hotkey("ctrl", "v")
             time.sleep(0.5)
+            logger.info("[weixin_send_message] step 3/4 done (%s)", elapsed())
 
+            logger.info("[weixin_send_message] step 4/4: press Enter ...")
             pyautogui.press("enter")
-            logger.info("Message sent to %s (%d chars)", contact, len(message))
+            time.sleep(0.5)
+            logger.info("[weixin_send_message] step 4/4 done (%s)", elapsed())
+
+            logger.info("[weixin_send_message] DONE (%s) - message sent to %s", elapsed(), contact)
             return f"消息已成功发送给 {contact}"
 
         except Exception as exc:
-            logger.error("send_message failed: %s", exc)
+            logger.error("[weixin_send_message] FAILED at (%s): %s", elapsed(), exc)
             raise
 
-    def get_main_window_info(self) -> str:
+    def weixin_get_main_window(self) -> str:
         """Return info about the WeChat main window."""
         if not self._ensure_ready():
             raise RuntimeError("微信未启动或主窗口不可用")
@@ -385,7 +354,7 @@ class WeixinTool(AppTool):
             )
             return info
         except Exception as exc:
-            logger.error("get_main_window_info failed: %s", exc)
+            logger.error("weixin_get_main_window failed: %s", exc)
             raise
 
     # ------------------------------------------------------------------
@@ -473,7 +442,7 @@ class WeixinTool(AppTool):
         except Exception:
             logger.warning("Cannot connect to WeChat, attempting to launch")
             try:
-                self.launch_weixin()
+                self.weixin_launch()
                 return True
             except Exception as launch_exc:
                 logger.error("Auto-launch WeChat failed: %s", launch_exc)

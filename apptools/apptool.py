@@ -3,16 +3,24 @@
 Each plugin (e.g. WeChat) subclasses AppTool and implements:
 - name / manifest (metadata)
 - initialize() / cleanup()  (lifecycle)
-- get_tool_definitions()   (MCP tool registration metadata)
 
-Every tool function MUST have proper Python type annotations – the
-MCP server uses those to generate the JSON schema for each tool.
+Tool definitions are driven by manifest.json ``tools`` section.
+Each tool entry must specify a ``method`` field that maps to the
+Python method name on the plugin class.  ``description`` and
+``params`` are also read from manifest — no need to hardcode them
+in Python.
+
+Subclasses may override ``get_tool_definitions()`` if manifest-driven
+lookup is not sufficient.
 """
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 
 # Type alias for tool registration.
 # {tool_name: (callable, metadata_dictionary)}
@@ -75,22 +83,56 @@ class AppTool(ABC):
     # Tools
     # ------------------------------------------------------------------
 
-    @abstractmethod
     def get_tool_definitions(self) -> ToolMap:
-        """Return every MCP tool this plugin exposes.
+        """Build MCP tool definitions from manifest.json ``tools`` section.
 
-        Format::
+        Each entry in ``manifest["tools"]`` is keyed by the tool name,
+        which must also be the Python method name on this class:
+
+        .. code-block:: json
 
             {
-                "tool_name": (callable, {
-                    "description": "What the tool does",
-                }),
+              "my_tool": {
+                "description": "What it does",
+                "params": [{"name": "x", "type": "string", "description": "..."}]
+              }
             }
 
-        Each *callable* should have typed parameters and a return type
-        annotation.  The callable can be synchronous or asynchronous.
+        The base class resolves ``self.my_tool`` automatically.
+        Subclasses may override for custom behaviour.
         """
-        ...
+        manifest = self.manifest
+        tools_cfg: dict[str, Any] = manifest.get("tools", {})
+        if not tools_cfg:
+            return {}
+
+        definitions: ToolMap = {}
+        for tool_name, tool_cfg in tools_cfg.items():
+            method = getattr(self, tool_name, None)
+            if method is None or not callable(method):
+                logger.error(
+                    "Tool %r has no matching method on %s",
+                    tool_name, type(self).__name__,
+                )
+                continue
+
+            metadata: dict[str, Any] = {
+                "description": tool_cfg.get("description", ""),
+            }
+
+            params_list = tool_cfg.get("params", [])
+            if params_list:
+                metadata["parameters"] = {
+                    p["name"]: {
+                        "type": p.get("type", "string"),
+                        "description": p.get("description", ""),
+                    }
+                    for p in params_list
+                }
+
+            definitions[tool_name] = (method, metadata)
+
+        return definitions
 
     # ------------------------------------------------------------------
     # Manifest helpers

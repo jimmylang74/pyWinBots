@@ -8,34 +8,14 @@
   "app_args": "--scene=taskbarpins",
   "min_sdk_version": "1.0.0",
   "backend": "uia",
-  "capabilities": [
-    "weixin_launch",
-    "weixin_search_contact",
-    "weixin_send_message",
-    "weixin_get_main_window"
-  ],
   "tools": {
-    "weixin_launch": {
-      "description": "启动微信 Windows 客户端",
-      "params": []
-    },
-    "weixin_search_contact": {
-      "description": "搜索微信联系人",
-      "params": [
-        {
-          "name": "name",
-          "type": "string",
-          "description": "联系人姓名或昵称"
-        }
-      ]
-    },
     "weixin_send_message": {
-      "description": "向指定联系人发送文本消息",
+      "description": "向指定微信联系人发送文本消息",
       "params": [
         {
           "name": "contact",
           "type": "string",
-          "description": "联系人姓名或昵称"
+          "description": "微信联系人姓名或昵称"
         },
         {
           "name": "message",
@@ -43,10 +23,6 @@
           "description": "消息内容"
         }
       ]
-    },
-    "weixin_get_main_window": {
-      "description": "获取微信主窗口信息（位置、大小、标题）",
-      "params": []
     }
   },
   "locations": {

@@ -86,7 +86,6 @@ pywinbots/
 ├── test.json                  # Test configuration
 ├── requirements.txt           # Dependencies
 ├── README.md                  # This file
-├── API.md                     # Plugin development guide
 │
 ├── base/                      # Basic utilities
 │   ├── debug.py               #   Logging
@@ -101,6 +100,7 @@ pywinbots/
 ├── apptools/                  # Plugin system
 │   ├── apptool.py             #   Base class for plugins
 │   ├── appmgt.py              #   Plugin manager (scan/load/manage)
+│   ├── API.md                 #   Plugin development guide
 │   └── weixin/                #   WeChat (微信) plugin
 │       ├── weixin.py          #     Plugin implementation
 │       ├── manifest.json      #     App metadata & capabilities
@@ -123,7 +123,7 @@ pywinbots/
 
 ## Creating a Plugin
 
-See [API.md](API.md) for the full plugin development guide.
+See [apptools/API.md](apptools/API.md) for the full plugin development guide.
 
 Short version:
 

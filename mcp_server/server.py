@@ -80,6 +80,17 @@ class PyWinBotsServer:
             try:
                 desc = metadata.get("description", "")
                 self.mcp.add_tool(fn, name=tool_name, description=desc)
+
+                params_meta = metadata.get("parameters", {})
+                if params_meta:
+                    tool = self.mcp._tool_manager.get_tool(tool_name)
+                    if tool is not None:
+                        for pname, pinfo in params_meta.items():
+                            prop = tool.parameters.get("properties", {}).get(pname)
+                            if prop is not None:
+                                prop["type"] = pinfo.get("type", prop.get("type", "string"))
+                                prop["description"] = pinfo.get("description", prop.get("description", ""))
+
                 registered += 1
             except Exception as exc:
                 logger.error("Failed to register tool '%s': %s", tool_name, exc)

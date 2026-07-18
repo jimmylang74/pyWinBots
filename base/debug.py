@@ -31,14 +31,17 @@ def _get_default_log_dir() -> Path:
 
 
 _RED = "\033[91m"
+_GREEN = "\033[92m"
 _RESET = "\033[0m"
 
 
 class _ColorFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         msg = super().format(record)
-        if "[MCP]" in msg:
+        if record.levelno >= logging.ERROR:
             return f"{_RED}{msg}{_RESET}"
+        if "[MCP]" in msg:
+            return f"{_GREEN}{msg}{_RESET}"
         return msg
 
 

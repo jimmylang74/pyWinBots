@@ -265,22 +265,22 @@ class WeixinTool(AppTool):
             search_y = rect.top + self._searchbox_offset[1]
             logger.info("[weixin_search_contact] step 2/5: click search box at (%d, %d) ...", search_x, search_y)
             pyautogui.click(search_x, search_y)
-            time.sleep(0.5)
+            time.sleep(0.1)
             pyautogui.hotkey("ctrl", "a")
             pyautogui.press("delete")
-            time.sleep(0.2)
+            time.sleep(0.1)
             logger.info("[weixin_search_contact] step 2/5 done (%s)", elapsed())
 
             logger.info("[weixin_search_contact] step 3/5: type name %r ...", name)
             _clipboard_paste(name)
             time.sleep(0.1)
             pyautogui.hotkey("ctrl", "v")
-            time.sleep(2.0)
+            time.sleep(.3)
             logger.info("[weixin_search_contact] step 3/5 done (%s)", elapsed())
 
             logger.info("[weixin_search_contact] step 4/5: press Enter ...")
             pyautogui.press("enter")
-            time.sleep(1.0)
+            time.sleep(0.5)
             logger.info("[weixin_search_contact] step 4/5 done (%s)", elapsed())
 
             logger.info("[weixin_search_contact] step 5/5: verify ...")
@@ -304,25 +304,25 @@ class WeixinTool(AppTool):
         try:
             logger.info("[weixin_send_message] step 1/4: search contact %r ...", contact)
             self.weixin_search_contact(contact)
-            time.sleep(1)
+            time.sleep(0.1)
             logger.info("[weixin_send_message] step 1/4 done (%s)", elapsed())
 
             self._main_window.set_focus()
-            time.sleep(0.5)
+            time.sleep(0.1)
             rect = self._main_window.rectangle()
 
             input_x = rect.left + self._messageinput_offset[0]
             input_y = rect.top + self._messageinput_offset[1]
             logger.info("[weixin_send_message] step 2/4: click input box at (%d, %d) ...", input_x, input_y)
             pyautogui.click(input_x, input_y)
-            time.sleep(0.3)
+            time.sleep(0.1)
             logger.info("[weixin_send_message] step 2/4 done (%s)", elapsed())
 
             logger.info("[weixin_send_message] step 3/4: paste message (%d chars) ...", len(message))
             _clipboard_paste(message)
             time.sleep(0.1)
             pyautogui.hotkey("ctrl", "v")
-            time.sleep(0.5)
+            time.sleep(0.3)
             logger.info("[weixin_send_message] step 3/4 done (%s)", elapsed())
 
             logger.info("[weixin_send_message] step 4/4: press Enter ...")
